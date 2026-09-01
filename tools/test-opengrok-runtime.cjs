@@ -11,14 +11,14 @@ function hasMeaningfulContentPart(part) {
 
 // GLM sometimes emits tool calls as embedded JSON objects in the text stream.
 var embedded = h.extractEmbeddedStreamJson(
-  '{"type":"tool-call","toolName":"SendToUser","args":{"type":"text","content":"hi"}}'
+  '{"type":"tool-call","toolName":"SendToUser","args":{"type":"text","content":"hi"}}',
 );
 assert.equal(embedded.calls.length, 1);
 assert.equal(embedded.calls[0].function.name, "SendToUser");
 assert.equal(embedded.text, "");
 
 var mixed = h.extractEmbeddedStreamJson(
-  'hello {"type":"reasoning","text":"think"} {"type":"tool-call","toolName":"send_message","args":{"x":1}}'
+  'hello {"type":"reasoning","text":"think"} {"type":"tool-call","toolName":"send_message","args":{"x":1}}',
 );
 assert.equal(mixed.text, "hello");
 assert.equal(mixed.reasoning, "think");
@@ -29,12 +29,35 @@ assert.equal(mixed.calls[0].function.name, "SendToUser");
 var content = h.buildAssistantResponseContent(
   { reasoning_content: "chain" },
   "visible",
-  [{ id: "c1", function: { name: "SendToUser", arguments: '{"type":"text","content":"ok"}' } }]
+  [
+    {
+      id: "c1",
+      function: {
+        name: "SendToUser",
+        arguments: '{"type":"text","content":"ok"}',
+      },
+    },
+  ],
 );
 assert.ok(Array.isArray(content));
-assert.equal(content.filter(function (p) { return p.type === "reasoning"; }).length, 1);
-assert.equal(content.filter(function (p) { return p.type === "text"; }).length, 1);
-assert.equal(content.filter(function (p) { return p.type === "tool-call"; }).length, 1);
+assert.equal(
+  content.filter(function (p) {
+    return p.type === "reasoning";
+  }).length,
+  1,
+);
+assert.equal(
+  content.filter(function (p) {
+    return p.type === "text";
+  }).length,
+  1,
+);
+assert.equal(
+  content.filter(function (p) {
+    return p.type === "tool-call";
+  }).length,
+  1,
+);
 assert.ok(content.every(hasMeaningfulContentPart));
 
 // Round-trip assistant tool history into OpenAI wire shape.
@@ -42,10 +65,19 @@ var msgs = h.toOpenAIMessages([
   {
     role: "assistant",
     content: [
-      { type: "tool-call", toolCallId: "tc1", toolName: "SendToUser", args: { type: "text", content: "x" } },
+      {
+        type: "tool-call",
+        toolCallId: "tc1",
+        toolName: "SendToUser",
+        args: { type: "text", content: "x" },
+      },
     ],
   },
-  { role: "tool", toolCallId: "tc1", content: [{ type: "tool-result", result: "done" }] },
+  {
+    role: "tool",
+    toolCallId: "tc1",
+    content: [{ type: "tool-result", result: "done" }],
+  },
 ]);
 assert.equal(msgs.length, 2);
 assert.equal(msgs[0].role, "assistant");
@@ -67,8 +99,18 @@ var researchParams = h.resolveParametersForTurn(effortBinding, [
 var analyzeParams = h.resolveParametersForTurn(effortBinding, [
   { role: "user", content: "now run_native_sot.py with the session config" },
 ]);
-assert.equal(researchParams.filter(function (p) { return p.id === "effort"; })[0].value, "high");
-assert.equal(analyzeParams.filter(function (p) { return p.id === "effort"; })[0].value, "medium");
+assert.equal(
+  researchParams.filter(function (p) {
+    return p.id === "effort";
+  })[0].value,
+  "high",
+);
+assert.equal(
+  analyzeParams.filter(function (p) {
+    return p.id === "effort";
+  })[0].value,
+  "medium",
+);
 
 // --- wrapSession routing: native lane + fail-safe passthrough ---
 // (bindings path is captured at require time, so re-require with env set)
@@ -78,30 +120,58 @@ var fs2 = require("fs");
 
 function rerequire(bindingsPath) {
   process.env.OPENGROK_BINDINGS = bindingsPath;
-  process.env.OPENGROK_LOG = path.join(os.tmpdir(), "opengrok-test-session.log");
+  process.env.OPENGROK_LOG = path.join(
+    os.tmpdir(),
+    "opengrok-test-session.log",
+  );
   delete require.cache[require.resolve("./opengrok-runtime.cjs")];
   return require("./opengrok-runtime.cjs");
 }
-var stockSentinel = { kind: "stock", getSession: function () { return {}; } };
-var stockFn = function () { return stockSentinel; };
+var stockSentinel = {
+  kind: "stock",
+  getSession: function () {
+    return {};
+  },
+};
+var stockFn = function () {
+  return stockSentinel;
+};
 var turnArgs = [{}, { modelId: "grok-4.6" }];
 
 // 1. No bindings file at all -> native passthrough (previously threw).
 var rtNone = rerequire(path.join(os.tmpdir(), "opengrok-test-missing.json"));
-assert.equal(rtNone.wrapSession(stockFn, turnArgs), stockSentinel,
-  "no bindings file must degrade to native, never kill chat");
+assert.equal(
+  rtNone.wrapSession(stockFn, turnArgs),
+  stockSentinel,
+  "no bindings file must degrade to native, never kill chat",
+);
 
 // 2. provider:"native" binding -> passthrough even though it has no hop fields.
 var tmpB = path.join(os.tmpdir(), "opengrok-test-bindings.json");
-fs2.writeFileSync(tmpB, JSON.stringify({ agents: { "*": { name: "native", provider: "native" } } }));
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({ agents: { "*": { name: "native", provider: "native" } } }),
+);
 var rtNative = rerequire(tmpB);
-assert.equal(rtNative.wrapSession(stockFn, turnArgs), stockSentinel,
-  "provider=native must return the stock provider untouched");
+assert.equal(
+  rtNative.wrapSession(stockFn, turnArgs),
+  stockSentinel,
+  "provider=native must return the stock provider untouched",
+);
 
 // 3. A hop binding still routes through the hop wrapper.
-fs2.writeFileSync(tmpB, JSON.stringify({ agents: { "*": {
-  modelId: "glm-5.3-flash", provider: "custom", hopBaseUrl: "http://127.0.0.1:9/v1",
-} } }));
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({
+    agents: {
+      "*": {
+        modelId: "glm-5.3-flash",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+  }),
+);
 var rtHop = rerequire(tmpB);
 var wrapped = rtHop.wrapSession(stockFn, turnArgs);
 assert.notEqual(wrapped, stockSentinel);
