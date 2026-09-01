@@ -423,19 +423,44 @@ PAGE_HTML = r"""<!doctype html>
   .fg{margin-bottom:16px}
   .fg label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px}
   .fg .help{font-size:11px;color:var(--muted);margin-top:5px;opacity:.85}
+  .fg-flex-end{display:flex;flex-direction:column;justify-content:flex-end}
   input,select{
     width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:10px;
-    padding:10px 12px;color:var(--text);font-size:13px;outline:none;font-family:inherit;transition:border-color .15s, box-shadow .15s;
+    padding:10px 14px;color:var(--text);font-size:13px;outline:none;font-family:inherit;transition:border-color .15s, box-shadow .15s;
   }
   input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.18)}
-  select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
-    background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px;background-repeat:no-repeat;padding-right:34px}
-  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  select{
+    appearance:none;-webkit-appearance:none;-moz-appearance:none;
+    cursor:pointer;
+    background-color:var(--panel2);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-position:calc(100% - 14px) center;
+    background-size:14px 14px;
+    background-repeat:no-repeat;
+    padding-right:38px;
+    font-weight:500;
+  }
+  select option{
+    background:#121826;
+    color:#e6eaf2;
+    padding:10px 14px;
+    font-size:13px;
+  }
+  select option:disabled{
+    color:#525e75;
+  }
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
   .input-wrap{position:relative}
   .input-wrap .suffix{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:4px 6px}
 
-  /* switch */
-  .switch{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+  /* switch card style for fast mode */
+  .switch-card{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:8px 14px;min-height:42px;cursor:pointer;user-select:none;transition:border-color .15s;
+  }
+  .switch-card:hover{border-color:var(--accent)}
+  .switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
   .switch input{display:none}
   .switch .track{width:40px;height:22px;border-radius:999px;background:#232c44;position:relative;transition:background .15s;flex:none}
   .switch .track::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#7d87a3;transition:all .15s}
@@ -625,10 +650,12 @@ PAGE_HTML = r"""<!doctype html>
           </select>
         </div>
         <div class="fg">
-          <label>极速模式</label>
-          <label class="switch" style="margin-top:8px">
-            <input type="checkbox" id="swFast"><span class="track"></span>
-            <span style="font-size:12px;color:var(--muted)">Fast Lane · 关闭多余思考</span>
+          <label>极速模式（Fast Lane）</label>
+          <label class="switch-card" for="swFast">
+            <span style="font-size:12px;color:var(--text);font-weight:500">⚡ 关闭多余思考 · 极速响应</span>
+            <span class="switch">
+              <input type="checkbox" id="swFast"><span class="track"></span>
+            </span>
           </label>
         </div>
       </div>
@@ -791,10 +818,10 @@ PAGE_HTML = r"""<!doctype html>
   <div class="modal">
     <h3 id="mapModalTitle">新增模型映射</h3>
     <div class="fg">
-      <label>请求模型 slug（客户端选的原生模型）</label>
-      <input id="inMapSlug" list="slugList" class="mono" placeholder="grok-4.5-high / sand-default / gemini-2.5-flash">
+      <label>请求模型 slug / 通配符 Pattern（客户端选的原生模型）</label>
+      <input id="inMapSlug" list="slugList" class="mono" placeholder="grok-4.5-* / grok-4.5-high / sand-* / gemini-*">
       <datalist id="slugList"></datalist>
-      <div class="help">候选 = 日志实际观测到的 slug ∪ host 内置模型菜单；也可自由输入。</div>
+      <div class="help">支持通配符（如 <code>grok-4.5-*</code>、<code>*-fast-*</code>）或精准 slug。候选 = 日志观测 ∪ host 内置。</div>
     </div>
     <div class="fg">
       <label>路由目标</label>
@@ -1237,8 +1264,8 @@ async function saveMapFromModal(btn){
   const target = $('selMapTarget').value;
   const model = $('inMapModel').value.trim();
   const effort = $('selMapEffort').value;
-  if (!slug){ toast('err', '请填写请求模型 slug'); return; }
-  if (!/^[a-zA-Z0-9._-]+$/.test(slug)){ toast('err', 'slug 只能包含字母、数字和 . _ -'); return; }
+  if (!slug){ toast('err', '请填写请求模型 slug 或通配符模式'); return; }
+  if (!/^[a-zA-Z0-9._\-*?]+$/.test(slug)){ toast('err', 'slug 只能包含字母、数字、点(.)、下划线(_)、短横(-)及通配符(*, ?)'); return; }
   if (target !== 'native' && !model){ toast('err', '请填写实际模型'); return; }
   if (!globalBindings.models) globalBindings.models = {};
   if (target === 'native'){

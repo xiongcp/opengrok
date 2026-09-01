@@ -62,6 +62,22 @@ function loadConfig() {
   return data && typeof data === "object" ? data : {};
 }
 
+function matchModelPattern(pattern, slug) {
+  if (!pattern || !slug) return false;
+  if (pattern.toLowerCase() === slug.toLowerCase()) return true;
+  if (pattern.indexOf("*") >= 0 || pattern.indexOf("?") >= 0) {
+    var escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    escaped = escaped.replace(/\*/g, ".*").replace(/\?/g, ".");
+    try {
+      return new RegExp("^" + escaped + "$", "i").test(slug);
+    } catch (_e) {
+      void _e;
+      return false;
+    }
+  }
+  return false;
+}
+
 function resolveBinding(args) {
   var data;
   try {
@@ -78,14 +94,35 @@ function resolveBinding(args) {
       return agents[ids[i]];
     }
   }
-  // Model lane: rewrite one specific client-requested (native) slug to a
-  // custom upstream route — or pin it native via {"provider":"native"}.
-  // Precedence: agent UUID > models[slug] > agents["*"] > native fallback.
+  // Model lane: rewrite client-requested (native) slugs to custom upstream
+  // routes — or pin them native via {"provider":"native"}.
+  // Supports exact match and wildcard glob patterns (e.g. "grok-*", "*-fast-*").
+  // Precedence: agent UUID > exact models[slug] > wildcard models[pat] > agents["*"] > native fallback.
   var req = requestedModelId(args);
   var models = data.models || {};
-  if (req && models[req]) {
-    log("route model-map " + req);
-    return models[req];
+  if (req) {
+    if (models[req]) {
+      log("route model-map exact=" + req);
+      return models[req];
+    }
+    var modelKeys = Object.keys(models);
+    var wildcardKeys = modelKeys.filter(function (k) {
+      return k.indexOf("*") >= 0 || k.indexOf("?") >= 0;
+    });
+    // Specificity sort: fewer wildcards first, longer pattern first
+    wildcardKeys.sort(function (a, b) {
+      var starA = (a.match(/\*/g) || []).length;
+      var starB = (b.match(/\*/g) || []).length;
+      if (starA !== starB) return starA - starB;
+      return b.length - a.length;
+    });
+    for (var m = 0; m < wildcardKeys.length; m++) {
+      var pat = wildcardKeys[m];
+      if (matchModelPattern(pat, req)) {
+        log("route model-map wildcard=" + pat + " for " + req);
+        return models[pat];
+      }
+    }
   }
   if (agents["*"]) {
     // Surface unbound agent ids so the dashboard can offer one-click binding.

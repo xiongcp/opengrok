@@ -254,7 +254,63 @@ assert.equal(
   "agent UUID binding must beat models[slug]",
 );
 
-// 6. empty config entirely -> native passthrough, never a thrown turn.
+// 6. models wildcard glob pattern: "grok-4.5-*" matches "grok-4.5-medium"
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({
+    agents: {
+      "*": {
+        modelId: "gemini-3.7-flash-high",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+    models: {
+      "grok-4.5-*": {
+        modelId: "glm-5.3-flash",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+      "grok-4.5-high": {
+        modelId: "claude-sonnet-custom",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+      "*-native": { provider: "native" },
+    },
+  }),
+);
+var rtWild = rerequire(tmpB);
+// Exact match wins over wildcard
+var wExact = rtWild.wrapSession(stockFn, [{}, { modelId: "grok-4.5-high" }]);
+assert.equal(
+  wExact.getModelId(),
+  "claude-sonnet-custom",
+  "exact models[slug] must beat wildcard models[pat]",
+);
+// Wildcard matches
+var wGlob = rtWild.wrapSession(stockFn, [{}, { modelId: "grok-4.5-medium" }]);
+assert.equal(
+  wGlob.getModelId(),
+  "glm-5.3-flash",
+  "wildcard 'grok-4.5-*' must match 'grok-4.5-medium'",
+);
+// Wildcard native pin
+var wNat = rtWild.wrapSession(stockFn, [{}, { modelId: "special-native" }]);
+assert.equal(
+  wNat,
+  stockSentinel,
+  "wildcard '*-native' with provider=native must return stock provider",
+);
+// Non-matching falls back to "*"
+var wFall = rtWild.wrapSession(stockFn, [{}, { modelId: "deepseek-chat" }]);
+assert.equal(
+  wFall.getModelId(),
+  "gemini-3.7-flash-high",
+  "non-matching slug must fall back to agents['*']",
+);
+
+// 7. empty config entirely -> native passthrough, never a thrown turn.
 fs2.writeFileSync(tmpB, JSON.stringify({ agents: {}, models: {} }));
 var rtEmpty = rerequire(tmpB);
 assert.equal(
