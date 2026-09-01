@@ -305,6 +305,23 @@ PAGE_HTML = r"""<!doctype html>
           <input type="password" id="apiKey" placeholder="sk-...">
         </div>
       </div>
+      <div class="grid" style="margin-bottom: 14px;">
+        <div class="form-group">
+          <label>思考深度 / 推理强度 (Effort)</label>
+          <select id="effortSelect" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:10px 14px; border-radius:8px; font-size:14px; outline:none;">
+            <option value="high" selected>high (默认推荐 - 深度推理)</option>
+            <option value="max">max (极限思考 / 最大Token预算)</option>
+            <option value="medium">medium (均衡思考)</option>
+            <option value="low">low (轻量思考 / 快速模式)</option>
+          </select>
+        </div>
+        <div class="form-group" style="display:flex; flex-direction:column; justify-content:center;">
+          <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin-top:20px;">
+            <input type="checkbox" id="fastToggle" style="accent-color:var(--accent); width:16px; height:16px; cursor:pointer;">
+            <span>开启极速响应模式 (Fast Lane / 关闭多余思考)</span>
+          </label>
+        </div>
+      </div>
       <div class="btn-group" style="justify-content: flex-end;">
         <button class="secondary" onclick="testConnection()">🧪 测试模型联通性</button>
         <button onclick="saveAndApply()">💾 保存并应用到沙箱</button>
@@ -421,6 +438,17 @@ PAGE_HTML = r"""<!doctype html>
           document.getElementById('modelSlug').value = agent.modelId;
         }
 
+        if (Array.isArray(agent.parameters)) {
+          const effortParam = agent.parameters.find(p => p && p.id === 'effort');
+          if (effortParam && effortParam.value) {
+            document.getElementById('effortSelect').value = effortParam.value;
+          }
+          const fastParam = agent.parameters.find(p => p && p.id === 'fast');
+          if (fastParam) {
+            document.getElementById('fastToggle').checked = fastParam.value === 'true';
+          }
+        }
+
         if (data.session_log) {
           const logBox = document.getElementById('logBox');
           logBox.textContent = data.session_log || '暂无最近请求日志。在 Grok Bot 中发送一条消息即可在此显示。';
@@ -461,6 +489,8 @@ PAGE_HTML = r"""<!doctype html>
       const upstream = document.getElementById('upstreamUrl').value.trim();
       const model = document.getElementById('modelSlug').value.trim();
       const key = document.getElementById('apiKey').value.trim();
+      const effort = document.getElementById('effortSelect').value;
+      const fast = document.getElementById('fastToggle').checked;
       if (!upstream || !model) {
         alert('请先填写上游 API 地址和模型名称');
         return;
@@ -470,7 +500,7 @@ PAGE_HTML = r"""<!doctype html>
         const res = await fetch('/api/save', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ upstream, model, apiKey: key })
+          body: JSON.stringify({ upstream, model, apiKey: key, effort, fast })
         });
         const d = await res.json();
         if (d.ok) {
@@ -662,6 +692,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             upstream = req_data.get("upstream", "").rstrip("/")
             model = req_data.get("model", "")
             api_key = req_data.get("apiKey", "")
+            effort = req_data.get("effort", "high")
+            fast = bool(req_data.get("fast", False))
             if not upstream or not model:
                 self._json(400, {"ok": False, "error": "upstream and model required"})
                 return
@@ -684,6 +716,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             bindings_path = data_dir / "model-bindings.json"
             hop_base = "http://127.0.0.1:18790/v1"
 
+            params = [
+                {"id": "effort", "value": str(effort)},
+                {"id": "thinking", "value": "true" if not fast else "false"},
+            ]
+            if fast:
+                params.append({"id": "fast", "value": "true"})
+
             bdoc = {
                 "_comment": "configured via opengrok remote-dashboard",
                 "agents": {
@@ -693,6 +732,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "provider": "custom",
                         "hopBaseUrl": hop_base,
                         "upstream": upstream,
+                        "parameters": params,
                     }
                 }
             }
