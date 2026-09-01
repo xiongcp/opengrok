@@ -51,7 +51,10 @@ for md in sorted(HERE.rglob("*.md")):
 IPV4 = re.compile(r"\b(?!127\.0\.0\.1|0\.0\.0\.0)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
 KEYISH = re.compile(r"\b(sk|xai|Bearer|hsk|ak)[-_][A-Za-z0-9]{16,}\b", re.I)
 def is_private(ip):
-    octets = [int(x) for x in ip.split(".")]
+    try:
+        octets = [int(x) for x in ip.split(".")]
+    except ValueError:
+        return False
     return (octets[0] == 10 or octets[:2] == [192, 168] or
             octets[0] == 172 and 16 <= octets[1] <= 31 or
             octets[0] == 100 and 64 <= octets[1] <= 127)
@@ -91,6 +94,8 @@ else:
 
 if (HERE / "tools" / "test-wrap-proto-session.py").exists():
     run_named("wrap tests", [sys.executable, str(HERE / "tools" / "test-wrap-proto-session.py")])
+if (HERE / "tools" / "test-hop-server.py").exists():
+    run_named("hop-server tests", [sys.executable, str(HERE / "tools" / "test-hop-server.py")])
 
 print()
 for w in warns:

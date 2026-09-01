@@ -869,6 +869,7 @@ function wrapSession(stockFn, args) {
   );
   var hopSess = hop.createOpenAiHopSession({
     modelId: binding.modelId,
+    provider: binding.provider,
     baseUrl: binding.hopBaseUrl,
     maxMode: binding.maxMode === true,
     parameters: Array.isArray(binding.parameters) ? binding.parameters : [],

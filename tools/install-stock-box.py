@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -37,7 +38,7 @@ DEFAULT_HOST = "/home/box/sand-host/host-main.cjs"
 DEFAULT_DATA = "/home/box/sand-data"
 
 
-def die(msg: str) -> None:
+def die(msg: str) -> NoReturn:
     print("ERROR: " + msg, file=sys.stderr)
     sys.exit(1)
 
@@ -73,7 +74,10 @@ def write_bindings(path: Path, model: str, hop_base: str, agent_id: str) -> None
         "provider": "custom",
         "hopBaseUrl": hop_base,
         "maxMode": False,
-        "parameters": [{"id": "fast", "value": "true"}],
+        "parameters": [
+            {"id": "effort", "value": "high"},
+            {"id": "thinking", "value": "true"},
+        ],
     }
     agents[agent_id] = entry
     if "*" not in agents:
@@ -167,7 +171,10 @@ def main() -> int:
         env["HERMES_HOP_PORT"] = str(args.hop_port)
         env["HERMES_HOP_HOST"] = "127.0.0.1"
         log = data / "hop-server.log"
-        logf = open(log, "ab")
+        try:
+            logf = open(log, "ab")
+        except OSError as e:
+            die("cannot open hop log %s: %s" % (log, e))
         subprocess.Popen(
             [sys.executable, str(data / "hop-server.py")],
             env=env,

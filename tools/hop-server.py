@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
@@ -49,6 +50,19 @@ try:
 except Exception:
     _TIMEOUT = 1800.0
 _MAX_BODY = 64 * 1024 * 1024
+_VERSION_SUFFIX = re.compile(r"/v\d+$")
+
+
+def upstream_url(path: str) -> str:
+    """Join UPSTREAM with an incoming path without duplicating the API version segment.
+
+    Clients reach this shim through hopBaseUrl ".../v1", so every relayed path
+    starts with "/v1/". An upstream that already carries its own version suffix
+    ("https://api.x.ai/v1", ".../paas/v4") must not get a second one.
+    """
+    if path.startswith("/v1/") and _VERSION_SUFFIX.search(UPSTREAM):
+        return UPSTREAM + path[len("/v1"):]
+    return UPSTREAM + path
 
 
 def load_key() -> str:
@@ -96,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length) if length else None
 
-        url = UPSTREAM + self.path
+        url = upstream_url(self.path)
         req = urllib.request.Request(url, data=body, method=self.command)
         for name, value in self.headers.items():
             lname = name.lower()
@@ -182,7 +196,7 @@ def _probe_upstream() -> bool:
     for path in ("/health", "/healthz", "/v1/models", ""):
         try:
             req = urllib.request.Request(
-                UPSTREAM + path,
+                upstream_url(path),
                 headers={"User-Agent": "OpenGrok/1.0 (Mozilla/5.0)", "Authorization": "Bearer " + _KEY}
             )
             with urllib.request.urlopen(req, timeout=3) as r:

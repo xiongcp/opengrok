@@ -43,6 +43,7 @@ function applyMaps(body, ctx) {
     if (typeof maps.applyHarnessControls === "function") {
       var res = maps.applyHarnessControls({
         modelId: ctx.modelId,
+        provider: ctx.provider,
         baseUrl: ctx.baseUrl,
         maxMode: ctx.maxMode,
         parameters: ctx.parameters,
@@ -78,7 +79,10 @@ function applyMaps(body, ctx) {
       body.reasoning_effort = "low";
     } else if (effort) {
       body.reasoning_effort = effort;
-    } else if (thinking === "true" || ctx.maxMode === true) {
+    } else {
+      // Own-channel default. This lane only carries opengrok custom bindings,
+      // so a binding that names no effort means "think deeply", not "let the
+      // upstream pick". Explicit fast/thinking=false above still wins.
       body.reasoning_effort = "high";
     }
   }
@@ -330,6 +334,7 @@ function OpenAiHopSession(opts) {
   this.requestKind = opts.requestKind;
   this.maxMode = opts.maxMode === true;
   this.parameters = Array.isArray(opts.parameters) ? opts.parameters : [];
+  this.provider = opts.provider || "";
   this.modelId = opts.modelId || opts.model;
   this.baseUrl = opts.baseUrl || opts.openaiBaseUrl || opts.hopBaseUrl;
   this.apiKey = opts.apiKey || process.env.API_SERVER_KEY || "";
@@ -377,6 +382,7 @@ OpenAiHopSession.prototype._body = function _body(turn, stream) {
   body.max_tokens = turn.max_tokens == null ? 8192 : turn.max_tokens;
   applyMaps(body, {
     modelId: this.modelId,
+    provider: this.provider,
     baseUrl: this.baseUrl,
     maxMode: this.maxMode,
     parameters: this.parameters,
@@ -465,6 +471,7 @@ function createOpenAiHopSession(opts) {
     requestKind: requestKind,
     maxMode: maxMode,
     parameters: parameters,
+    provider: opts && opts.provider,
     modelId: opts && (opts.modelId || opts.model),
     baseUrl: opts && (opts.baseUrl || opts.openaiBaseUrl || opts.hopBaseUrl),
     apiKey: opts && opts.apiKey,

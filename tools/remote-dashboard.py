@@ -383,6 +383,10 @@ PAGE_HTML = r"""<!doctype html>
         <span id="statModel" class="val" style="color:var(--cyan);">-</span>
       </div>
       <div class="stat-card">
+        <span class="label">推理深度 & 思考开关</span>
+        <span id="statEffort" class="val" style="color:var(--warn);">-</span>
+      </div>
+      <div class="stat-card">
         <span class="label">上游服务根地址</span>
         <span id="statUpstream" class="val">-</span>
       </div>
@@ -404,16 +408,17 @@ PAGE_HTML = r"""<!doctype html>
     <!-- TAB 1: Primary Model -->
     <div id="tab-primary" class="tab-content active">
       <div class="card">
-        <h2>主流供应商一键预设 <span style="font-size:12px; color:var(--text-muted); font-weight:normal;">(点击快速填充)</span></h2>
+        <h2>主流供应商一键预设 <span style="font-size:12px; color:var(--text-muted); font-weight:normal;">(点击快速填充 | 🌟 = 渠道默认 high 推理)</span></h2>
         <div class="quick-picks">
-          <span class="pill" style="border-color:#6366f1; color:#a5b4fc;" onclick="setPreset('xai-grok4')">⚡ xAI Grok-4.6 (官方)</span>
-          <span class="pill" style="border-color:#6366f1; color:#a5b4fc;" onclick="setPreset('xai-grok2')">⚡ xAI Grok-2-Latest</span>
-          <span class="pill" onclick="setPreset('deepseek-r1')">🧠 DeepSeek-R1 (推理)</span>
-          <span class="pill" onclick="setPreset('deepseek-v3')">🚀 DeepSeek-V3 (通用)</span>
-          <span class="pill" onclick="setPreset('claude-37')">🔮 Claude 3.7 Sonnet (思考)</span>
-          <span class="pill" onclick="setPreset('gemini-25')">💎 Gemini 2.5 Pro</span>
-          <span class="pill" onclick="setPreset('glm-flash')">🇨🇳 智谱 GLM-5.3-Flash</span>
-          <span class="pill" onclick="setPreset('openai-4o')">🟢 OpenAI GPT-4o</span>
+          <span class="pill" style="border-color:#10b981; color:#6ee7b7; font-weight:bold;" onclick="useCurrentConfig()">✨ 我的自有渠道 (读取沙箱当前配置) 🌟</span>
+          <span class="pill" style="border-color:#6366f1; color:#a5b4fc;" onclick="setPreset('xai-grok4')">⚡ xAI Grok-4.6 🌟</span>
+          <span class="pill" style="border-color:#6366f1; color:#a5b4fc;" onclick="setPreset('xai-grok2')">⚡ xAI Grok-2 🌟</span>
+          <span class="pill" onclick="setPreset('deepseek-r1')">🧠 DeepSeek-R1 🌟</span>
+          <span class="pill" onclick="setPreset('deepseek-v3')">🚀 DeepSeek-V3 🌟</span>
+          <span class="pill" onclick="setPreset('claude-37')">🔮 Claude 3.7 🌟</span>
+          <span class="pill" onclick="setPreset('gemini-25')">💎 Gemini 2.5 🌟</span>
+          <span class="pill" onclick="setPreset('glm-flash')">🇨🇳 智谱 GLM 🌟</span>
+          <span class="pill" onclick="setPreset('openai-4o')">🟢 OpenAI GPT-4o 🌟</span>
           <span class="pill" onclick="setPreset('ollama')">💻 本地 Ollama</span>
         </div>
 
@@ -586,15 +591,15 @@ PAGE_HTML = r"""<!doctype html>
     let rawLogText = "";
 
     const PRESETS = {
-      'xai-grok4': { url: 'https://api.x.ai/v1', model: 'grok-4.6', effort: 'high' },
-      'xai-grok2': { url: 'https://api.x.ai/v1', model: 'grok-2-latest', effort: 'high' },
-      'deepseek-r1': { url: 'https://api.deepseek.com', model: 'deepseek-reasoner', effort: 'high' },
-      'deepseek-v3': { url: 'https://api.deepseek.com', model: 'deepseek-chat', effort: 'medium' },
-      'claude-37': { url: 'https://openrouter.ai/api', model: 'anthropic/claude-3.7-sonnet', effort: 'high' },
-      'gemini-25': { url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-pro', effort: 'high' },
-      'glm-flash': { url: 'https://open.bigmodel.cn/api/paas', model: 'glm-5.3-flash', effort: 'high' },
-      'openai-4o': { url: 'https://api.openai.com', model: 'gpt-4o', effort: 'medium' },
-      'ollama': { url: 'http://127.0.0.1:11434', model: 'qwen2.5-coder', effort: 'low' },
+      'xai-grok4': { url: 'https://api.x.ai/v1', model: 'grok-4.6', effort: 'high', desc: '⚡ xAI Grok-4.6 (官方)' },
+      'xai-grok2': { url: 'https://api.x.ai/v1', model: 'grok-2-latest', effort: 'high', desc: '⚡ xAI Grok-2-Latest' },
+      'deepseek-r1': { url: 'https://api.deepseek.com', model: 'deepseek-reasoner', effort: 'high', desc: '🧠 DeepSeek-R1 (推理)' },
+      'deepseek-v3': { url: 'https://api.deepseek.com', model: 'deepseek-chat', effort: 'high', desc: '🚀 DeepSeek-V3 (通用)' },
+      'claude-37': { url: 'https://openrouter.ai/api', model: 'anthropic/claude-3.7-sonnet', effort: 'high', desc: '🔮 Claude 3.7 Sonnet' },
+      'gemini-25': { url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-pro', effort: 'high', desc: '💎 Gemini 2.5 Pro' },
+      'glm-flash': { url: 'https://open.bigmodel.cn/api/paas', model: 'glm-5.3-flash', effort: 'high', desc: '🇨🇳 智谱 GLM-5.3' },
+      'openai-4o': { url: 'https://api.openai.com', model: 'gpt-4o', effort: 'high', desc: '🟢 OpenAI GPT-4o' },
+      'ollama': { url: 'http://127.0.0.1:11434', model: 'qwen2.5-coder', effort: 'low', desc: '💻 本地 Ollama' },
     };
 
     function switchTab(name) {
@@ -611,8 +616,25 @@ PAGE_HTML = r"""<!doctype html>
       if (p) {
         document.getElementById('upstreamUrl').value = p.url;
         document.getElementById('modelSlug').value = p.model;
-        if (p.effort) document.getElementById('effortSelect').value = p.effort;
+        document.getElementById('effortSelect').value = p.effort || 'high';
+        document.getElementById('fastToggle').checked = false;
+        showMsg(`✅ 已填充: ${p.desc || p.model} (推理深度: ${p.effort || 'high'})`, true);
       }
+    }
+
+    // 自有渠道不写死在代码里：直接回读沙箱当前生效的配置，避免私有端点进入仓库
+    function useCurrentConfig() {
+      const a = (globalBindings.agents && (globalBindings.agents['*'] || Object.values(globalBindings.agents)[0])) || {};
+      if (!a.upstream && !a.modelId) {
+        showMsg('❌ 沙箱当前没有已保存的渠道配置，请先手动填写并保存一次', false);
+        return;
+      }
+      if (a.upstream) document.getElementById('upstreamUrl').value = a.upstream;
+      if (a.modelId) document.getElementById('modelSlug').value = a.modelId;
+      const eff = (a.parameters || []).find(p => p.id === 'effort');
+      document.getElementById('effortSelect').value = eff ? eff.value : 'high';
+      document.getElementById('fastToggle').checked = false;
+      showMsg(`✅ 已载入沙箱当前配置: ${a.modelId || '-'} (推理深度: ${eff ? eff.value : 'high'})`, true);
     }
 
     function selectModel(name) {
@@ -872,6 +894,15 @@ PAGE_HTML = r"""<!doctype html>
         const agent = (globalBindings.agents && (globalBindings.agents['*'] || Object.values(globalBindings.agents)[0])) || {};
 
         document.getElementById('statModel').textContent = agent.modelId || '未配置';
+        
+        const effortParam = (agent.parameters || []).find(p => p.id === 'effort');
+        const thinkingParam = (agent.parameters || []).find(p => p.id === 'thinking');
+        const fastParam = (agent.parameters || []).find(p => p.id === 'fast');
+        let effortText = effortParam ? `effort=${effortParam.value}` : 'default';
+        if (thinkingParam) effortText += ` thinking=${thinkingParam.value}`;
+        if (fastParam && (fastParam.value === 'true' || fastParam.value === true)) effortText += ' fast=true';
+        document.getElementById('statEffort').textContent = effortText;
+        
         document.getElementById('statUpstream').textContent = agent.upstream || 'http://127.0.0.1:18790';
         document.getElementById('statApiKey').textContent = (data.api_key_info && data.api_key_info.configured)
           ? `已配置 (${data.api_key_info.preview})`
