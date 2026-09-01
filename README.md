@@ -48,6 +48,7 @@ python3 tools/remote-dashboard.py --port 8888 --host 0.0.0.0
 ```
 
 Open `http://<tailscale-ip>:8888` on your phone or laptop on the same Tailnet to:
+
 - Switch models & upstream endpoints with one click
 - Test live model connectivity
 - Re-wrap Grok Bot host after updates
@@ -72,7 +73,7 @@ own harness's wire shape, and gets a generic prompt shape plus wrong reasoning
 knobs. opengrok fixes the wire:
 
 | Model family | What goes wrong vanilla | What opengrok does |
-|---|---|---|
+| --- | --- | --- |
 | **Grok (xAI)** | effort knob is `xhigh`, not `max`; `fast` has no field | literal token mapping, always-on reasoning documented |
 | **GLM (Zhipu)** | thinks by default — silence is *expensive*; `max` is a real | verified token table + true off-switch via `thinking:disabled` |
 | **Claude** | thinking is owned by the auth shim; body-painting it 400s | shim-owned thinking, effort passes clean |
@@ -98,6 +99,7 @@ real token).
 ```
 
 **Two contracts, one story:**
+
 - `provider-maps.cjs` — Contract A: direct body maps (client-side lanes)
 - `provider-maps-hop.cjs` — Contract B: `applyHarnessControls()` for hop lanes — this is what ships on the box
 
