@@ -21,26 +21,66 @@ function completionsUrl(baseUrl) {
 
 function loadMaps() {
   var candidates = [
+    "/home/box/sand-data/provider-maps-hop.cjs",
+    path.join(__dirname, "provider-maps-hop.cjs"),
     "/home/box/sand-data/provider-maps.cjs",
     path.join(__dirname, "provider-maps.cjs"),
   ];
   for (var i = 0; i < candidates.length; i++) {
     try {
       return require(candidates[i]);
-    } catch (e) {
-      /* try next */
+    } catch (_err) {
+      void _err;
     }
   }
   return null;
 }
 
 function applyMaps(body, ctx) {
+  ctx = ctx || {};
   var maps = loadMaps();
-  if (!maps || typeof maps.applyProviderReasoningControls !== "function")
-    return;
-  var localQwen = false;
-  if (!localQwen) {
-    maps.applyProviderReasoningControls(body, ctx);
+  if (maps) {
+    if (typeof maps.applyHarnessControls === "function") {
+      var res = maps.applyHarnessControls({
+        modelId: ctx.modelId,
+        baseUrl: ctx.baseUrl,
+        maxMode: ctx.maxMode,
+        parameters: ctx.parameters,
+        body: body,
+      });
+      if (res && res.body) {
+        Object.assign(body, res.body);
+      }
+    } else if (typeof maps.applyProviderReasoningControls === "function") {
+      var localQwen = false;
+      if (!localQwen) {
+        maps.applyProviderReasoningControls(body, ctx);
+      }
+    }
+  }
+
+  // Guaranteed fallback: ensure reasoning_effort is set if parameters define it
+  var params = Array.isArray(ctx.parameters) ? ctx.parameters : [];
+  var effort = null;
+  var fast = false;
+  var thinking = null;
+  for (var i = 0; i < params.length; i++) {
+    var p = params[i];
+    if (!p) continue;
+    if (p.id === "effort" && p.value != null) effort = String(p.value);
+    if (p.id === "fast" && (p.value === true || String(p.value) === "true"))
+      fast = true;
+    if (p.id === "thinking" && p.value != null) thinking = String(p.value);
+  }
+
+  if (body.reasoning_effort == null) {
+    if (fast || thinking === "false") {
+      body.reasoning_effort = "low";
+    } else if (effort) {
+      body.reasoning_effort = effort;
+    } else if (thinking === "true" || ctx.maxMode === true) {
+      body.reasoning_effort = "high";
+    }
   }
 }
 
@@ -118,7 +158,8 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
           var json = null;
           try {
             json = JSON.parse(raw);
-          } catch (_e) {
+          } catch (_errJson) {
+            void _errJson;
             json = null;
           }
           resolve({ status: res.statusCode, raw: raw, json: json });
@@ -233,7 +274,8 @@ function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
                   onDelta({ type: "text", textDelta: delta.content });
               }
               if (delta.tool_calls) mergeToolCallDelta(acc, delta.tool_calls);
-            } catch (_e) {
+            } catch (_errSse) {
+              void _errSse;
               /* skip malformed SSE line */
             }
           }

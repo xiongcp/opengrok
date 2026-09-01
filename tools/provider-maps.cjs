@@ -16,27 +16,27 @@ var GROK_MODEL_RE = /^grok[-.]/i;
 
 // Normalize harness 'effort' values to an xAI reasoning_effort token.
 var EFFORT_TO_XAI = {
-  low: "low",
-  medium: "medium",
-  high: "high",
-  max: "xhigh",
-  xhigh: "xhigh",
-  minimal: "low",
+ low: "low",
+ medium: "medium",
+ high: "high",
+ max: "xhigh",
+ xhigh: "xhigh",
+ minimal: "low",
 };
 
 function isGrokRoute(modelId, baseUrl) {
-  if (GROK_MODEL_RE.test(String(modelId || ""))) return true;
-  // The box hop resolves grok slugs to the Windows shim; the shim is api.x.ai.
-  return /127\.0\.0\.1:18779/.test(String(baseUrl || ""));
+ if (GROK_MODEL_RE.test(String(modelId || ""))) return true;
+ // The box hop resolves grok slugs to the Windows shim; the shim is api.x.ai.
+ return /127\.0\.0\.1:18779/.test(String(baseUrl || ""));
 }
 
 function param(parameters, id) {
-  if (!Array.isArray(parameters)) return undefined;
-  for (var i = 0; i < parameters.length; i++) {
-    var p = parameters[i];
-    if (p && p.id === id) return p.value;
-  }
-  return undefined;
+ if (!Array.isArray(parameters)) return undefined;
+ for (var i = 0; i < parameters.length; i++) {
+  var p = parameters[i];
+  if (p && p.id === id) return p.value;
+ }
+ return undefined;
 }
 
 /*
@@ -49,21 +49,21 @@ function param(parameters, id) {
  *   parameters[context]"1m"         -> no wire field (client display hint)
  */
 function applyGrok(body, maxMode, parameters) {
-  var effort = param(parameters, "effort");
-  var fast = param(parameters, "fast");
-  if (maxMode === true) {
-    body.reasoning_effort = "xhigh";
-    return;
-  }
-  if (fast === true) {
-    body.reasoning_effort = "low";
-    return;
-  }
-  if (effort != null && Object.prototype.hasOwnProperty.call(EFFORT_TO_XAI, String(effort))) {
-    body.reasoning_effort = EFFORT_TO_XAI[String(effort)];
-    return;
-  }
-  // thinking:true/false and absent effort -> omit reasoning_effort -> xAI default (high).
+ var effort = param(parameters, "effort");
+ var fast = param(parameters, "fast");
+ if (maxMode === true) {
+  body.reasoning_effort = "xhigh";
+  return;
+ }
+ if (fast === true) {
+  body.reasoning_effort = "low";
+  return;
+ }
+ if (effort != null && Object.hasOwn(EFFORT_TO_XAI, String(effort))) {
+  body.reasoning_effort = EFFORT_TO_XAI[String(effort)];
+  return;
+ }
+ // thinking:true/false and absent effort -> omit reasoning_effort -> xAI default (high).
 }
 
 /*
@@ -105,30 +105,30 @@ function applyGrok(body, maxMode, parameters) {
  *   hermes-agent (:18790 hop target; api_server speaks standard OpenAI wire).
  */
 function applyProviderReasoningControls(body, ctx) {
-  ctx = ctx || {};
-  var modelId = String(ctx.modelId || "");
-  var baseUrl = String(ctx.baseUrl || "");
-  if (isGrokRoute(modelId, baseUrl)) {
-    applyGrok(body, ctx.maxMode === true, ctx.parameters);
-    return "grok";
-  }
-  if (isClaudeRoute(modelId, baseUrl)) {
-    // Pass-through BY DESIGN: :18776 owns thinking/tool-defang wire state.
-    return "claude-passthrough";
-  }
-  if (isGeminiRoute(modelId, baseUrl)) {
-    var gApplied = applyGemini(body, ctx.parameters);
-    return gApplied ? "gemini-slug" : "gemini-passthrough";
-  }
-  if (isDeepSeekRoute(modelId, baseUrl)) {
-    var dApplied = applyDeepSeek(body, modelId, ctx.parameters);
-    return dApplied ? "deepseek-thinking" : "deepseek-passthrough";
-  }
-  if (isGlmRoute(modelId, baseUrl)) {
-    var gLabel = applyGlm(body, ctx.parameters);
-    return gLabel || "glm-passthrough";
-  }
-  return "none";
+ ctx = ctx || {};
+ var modelId = String(ctx.modelId || "");
+ var baseUrl = String(ctx.baseUrl || "");
+ if (isGrokRoute(modelId, baseUrl)) {
+  applyGrok(body, ctx.maxMode === true, ctx.parameters);
+  return "grok";
+ }
+ if (isClaudeRoute(modelId, baseUrl)) {
+  // Pass-through BY DESIGN: :18776 owns thinking/tool-defang wire state.
+  return "claude-passthrough";
+ }
+ if (isGeminiRoute(modelId, baseUrl)) {
+  var gApplied = applyGemini(body, ctx.parameters);
+  return gApplied ? "gemini-slug" : "gemini-passthrough";
+ }
+ if (isDeepSeekRoute(modelId, baseUrl)) {
+  var dApplied = applyDeepSeek(body, modelId, ctx.parameters);
+  return dApplied ? "deepseek-thinking" : "deepseek-passthrough";
+ }
+ if (isGlmRoute(modelId, baseUrl)) {
+  var gLabel = applyGlm(body, ctx.parameters);
+  return gLabel || "glm-passthrough";
+ }
+ return "none";
 }
 
 /*
@@ -141,92 +141,107 @@ function applyProviderReasoningControls(body, ctx) {
  * fields onto silent requests (bare GLM is already native-shaped).
  */
 function applyGlm(body, parameters) {
-  var fast = param(parameters, "fast");
-  if (fast === true || String(fast).toLowerCase() === "true") {
-    body.thinking = { type: "disabled" };
-    return "glm-fast-off";
-  }
-  var effort = param(parameters, "effort");
-  var GLM_EFFORT = { low: "low", medium: "medium", high: "high",
-                     max: "max", xhigh: "max", maximal: "max" };
-  var token = effort != null ? GLM_EFFORT[String(effort)] : undefined;
-  if (token) {
-    if (!body.thinking) body.thinking = { type: "enabled" };
-    if (body.reasoning_effort == null) body.reasoning_effort = token;
-    return "glm-effort";
-  }
-  var t = param(parameters, "thinking");
-  if (t === false || String(t).toLowerCase() === "false") {
-    body.thinking = { type: "disabled" };
-    return "glm-thinking-off";
-  }
-  return null; // silent request stays untouched
+ var fast = param(parameters, "fast");
+ if (fast === true || String(fast).toLowerCase() === "true") {
+  body.thinking = { type: "disabled" };
+  return "glm-fast-off";
+ }
+ var effort = param(parameters, "effort");
+ var GLM_EFFORT = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  max: "max",
+  xhigh: "max",
+  maximal: "max",
+ };
+ var token = effort == null ? undefined : GLM_EFFORT[String(effort)];
+ if (token) {
+  if (!body.thinking) body.thinking = { type: "enabled" };
+  if (body.reasoning_effort == null) body.reasoning_effort = token;
+  return "glm-effort";
+ }
+ var t = param(parameters, "thinking");
+ if (t === false || String(t).toLowerCase() === "false") {
+  body.thinking = { type: "disabled" };
+  return "glm-thinking-off";
+ }
+ return null; // silent request stays untouched
 }
 
 var GLM_MODEL_RE = /^glm[-.\d]/i;
 var GLM_BASE_RE = /bigmodel\.cn/;
 function isGlmRoute(modelId, baseUrl) {
-  if (GLM_MODEL_RE.test(String(modelId || ""))) return true;
-  return GLM_BASE_RE.test(String(baseUrl || ""));
+ if (GLM_MODEL_RE.test(String(modelId || ""))) return true;
+ return GLM_BASE_RE.test(String(baseUrl || ""));
 }
 
 var CLAUDE_MODEL_RE = /^claude[-.]/i;
 function isClaudeRoute(modelId, baseUrl) {
-  if (CLAUDE_MODEL_RE.test(modelId)) return true;
-  return /127\.0\.0\.1:18776/.test(baseUrl);
+ if (CLAUDE_MODEL_RE.test(modelId)) return true;
+ return /127\.0\.0\.1:18776/.test(baseUrl);
 }
 
 var GEMINI_MODEL_RE = /^gemini/i;
 var GEMINI_TIERED_FAMILY_RE = /^gemini-3\.6-flash$/i; // only verified tiered family
-var GEMINI_EFFORT_TO_SLUG = { low: "low", medium: "medium", high: "high", max: "high", xhigh: "high" };
+var GEMINI_EFFORT_TO_SLUG = {
+ low: "low",
+ medium: "medium",
+ high: "high",
+ max: "high",
+ xhigh: "high",
+};
 function isGeminiRoute(modelId, baseUrl) {
-  if (GEMINI_MODEL_RE.test(modelId)) return true;
-  return /127\.0\.0\.1:18778/.test(baseUrl);
+ if (GEMINI_MODEL_RE.test(modelId)) return true;
+ return /127\.0\.0\.1:18778/.test(baseUrl);
 }
 function applyGemini(body, parameters) {
-  // Rewrite body.model only when the id is EXACTLY the tiered family and a
-  // recognized effort is present. Never touch 3.7-flash/thinking variants.
-  var m = String(body.model || "");
-  if (!GEMINI_TIERED_FAMILY_RE.test(m)) return false;
-  var effort = param(parameters, "effort");
-  if (effort == null && !(param(parameters, "fast") != null)) return false;
-  if (param(parameters, "fast") === true) return false; // no verified fast slug -> leave defaults
-  var token = GEMINI_EFFORT_TO_SLUG[String(effort)];
-  if (!token) return false;
-  body.model = m + "-" + token;
-  return true;
+ // Rewrite body.model only when the id is EXACTLY the tiered family and a
+ // recognized effort is present. Never touch 3.7-flash/thinking variants.
+ var m = String(body.model || "");
+ if (!GEMINI_TIERED_FAMILY_RE.test(m)) return false;
+ var effort = param(parameters, "effort");
+ if (effort == null && !(param(parameters, "fast") != null)) return false;
+ if (param(parameters, "fast") === true) return false; // no verified fast slug -> leave defaults
+ var token = GEMINI_EFFORT_TO_SLUG[String(effort)];
+ if (!token) return false;
+ body.model = m + "-" + token;
+ return true;
 }
 
 var DEEPSEEK_MODEL_RE = /deepseek/i;
 var DEEPSEEK_BASE_RE = /(nano-gpt\.com|127\.0\.0\.1:8791)/;
 function isDeepSeekRoute(modelId, baseUrl) {
-  if (DEEPSEEK_MODEL_RE.test(modelId)) return true;
-  return DEEPSEEK_BASE_RE.test(baseUrl);
+ if (DEEPSEEK_MODEL_RE.test(modelId)) return true;
+ return DEEPSEEK_BASE_RE.test(baseUrl);
 }
 function applyDeepSeek(body, modelId, parameters) {
-  var slugThinking = /:thinking\s*$/i.test(String(modelId));
-  var harnessThinking = param(parameters, "thinking");
-  var enable = slugThinking || harnessThinking === true || String(harnessThinking).toLowerCase() === "true";
-  if (!enable) return false;
-  // Top-level (post-extra_body merge) DeepSeek Harness wire shape:
-  body.thinking = { type: "enabled" };
-  if (body.reasoning_effort == null) body.reasoning_effort = "high";
-  if (body.max_tokens == null) body.max_tokens = 256000;
-  return true;
+ var slugThinking = /:thinking\s*$/i.test(String(modelId));
+ var harnessThinking = param(parameters, "thinking");
+ var enable =
+  slugThinking ||
+  harnessThinking === true ||
+  String(harnessThinking).toLowerCase() === "true";
+ if (!enable) return false;
+ // Top-level (post-extra_body merge) DeepSeek Harness wire shape:
+ body.thinking = { type: "enabled" };
+ if (body.reasoning_effort == null) body.reasoning_effort = "high";
+ if (body.max_tokens == null) body.max_tokens = 256000;
+ return true;
 }
 
 module.exports = {
-  applyProviderReasoningControls: applyProviderReasoningControls,
-  isGrokRoute: isGrokRoute,
-  __test: {
-    EFFORT_TO_XAI: EFFORT_TO_XAI,
-    applyGrok: applyGrok,
-    isClaudeRoute: isClaudeRoute,
-    isGeminiRoute: isGeminiRoute,
-    applyGemini: applyGemini,
-    isDeepSeekRoute: isDeepSeekRoute,
-    applyDeepSeek: applyDeepSeek,
-    isGlmRoute: isGlmRoute,
-    applyGlm: applyGlm,
-  },
+ applyProviderReasoningControls: applyProviderReasoningControls,
+ isGrokRoute: isGrokRoute,
+ __test: {
+  EFFORT_TO_XAI: EFFORT_TO_XAI,
+  applyGrok: applyGrok,
+  isClaudeRoute: isClaudeRoute,
+  isGeminiRoute: isGeminiRoute,
+  applyGemini: applyGemini,
+  isDeepSeekRoute: isDeepSeekRoute,
+  applyDeepSeek: applyDeepSeek,
+  isGlmRoute: isGlmRoute,
+  applyGlm: applyGlm,
+ },
 };
