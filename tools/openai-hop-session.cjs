@@ -80,13 +80,19 @@ function buildTurnOut(acc) {
 
 function postJson(urlStr, body, headers, timeoutMs, session) {
   return new Promise(function (resolve, reject) {
-    var u = new URL(urlStr);
+    var u;
+    try {
+      u = new URL(urlStr);
+    } catch (e) {
+      return reject(new Error("openai-hop-session: invalid url: " + e.message));
+    }
     var lib = u.protocol === "https:" ? https : http;
     var payload = Buffer.from(JSON.stringify(body), "utf8");
     var hdrs = Object.assign({
       "Content-Type": "application/json",
       "Content-Length": String(payload.length),
       "Accept": "application/json",
+      "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
     }, headers || {});
     var req = lib.request({
       protocol: u.protocol,
@@ -101,7 +107,7 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
       res.on("end", function () {
         var raw = Buffer.concat(chunks).toString("utf8");
         var json = null;
-        try { json = JSON.parse(raw); } catch (e) { json = null; }
+        try { json = JSON.parse(raw); } catch (_e) { json = null; }
         resolve({ status: res.statusCode, raw: raw, json: json });
       });
     });
@@ -128,13 +134,19 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
 
 function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
   return new Promise(function (resolve, reject) {
-    var u = new URL(urlStr);
+    var u;
+    try {
+      u = new URL(urlStr);
+    } catch (e) {
+      return reject(new Error("openai-hop-session: invalid url: " + e.message));
+    }
     var lib = u.protocol === "https:" ? https : http;
     var payload = Buffer.from(JSON.stringify(body), "utf8");
     var hdrs = Object.assign({
       "Content-Type": "application/json",
       "Content-Length": String(payload.length),
       "Accept": "text/event-stream",
+      "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
     }, headers || {});
     var acc = {
       content: "",
@@ -187,7 +199,7 @@ function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
               if (onDelta) onDelta({ type: "text", textDelta: delta.content });
             }
             if (delta.tool_calls) mergeToolCallDelta(acc, delta.tool_calls);
-          } catch (e) {
+          } catch (_e) {
             /* skip malformed SSE line */
           }
         }
