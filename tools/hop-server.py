@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
 import urllib.request
@@ -38,9 +39,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 log = logging.getLogger("hermes-hop")
 
 HOST = os.environ.get("HERMES_HOP_HOST", "127.0.0.1")
-PORT = int(os.environ.get("HERMES_HOP_PORT", "18790"))
+try:
+    PORT = int(os.environ.get("HERMES_HOP_PORT", "18790"))
+except Exception:
+    PORT = 18790
 UPSTREAM = os.environ.get("HERMES_HOP_UPSTREAM", "http://127.0.0.1:8642").rstrip("/")
-_TIMEOUT = float(os.environ.get("HERMES_HOP_TIMEOUT", "1800"))  # long agent turns
+try:
+    _TIMEOUT = float(os.environ.get("HERMES_HOP_TIMEOUT", "1800"))  # long agent turns
+except Exception:
+    _TIMEOUT = 1800.0
 _MAX_BODY = 64 * 1024 * 1024
 
 
@@ -48,16 +55,24 @@ def load_key() -> str:
     key = os.environ.get("API_SERVER_KEY", "").strip()
     if key:
         return key
-    env_path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes", ".env")
-    try:
-        with open(env_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line.startswith("API_SERVER_KEY="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-    except OSError:
-        pass
-    raise SystemExit("hermes-hop: no API_SERVER_KEY in env or %s" % env_path)
+    cands = [
+        Path("/home/box/sand-data/.api_key"),
+        Path.home() / ".env",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / ".env",
+    ]
+    for p in cands:
+        try:
+            if p.is_file():
+                txt = p.read_text(encoding="utf-8").strip()
+                for line in txt.splitlines():
+                    line = line.strip()
+                    if line.startswith("API_SERVER_KEY="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+                if txt and not any(c in txt for c in "\n\r ="):
+                    return txt
+        except OSError:
+            pass
+    return ""
 
 
 _KEY = ""  # set in main()
@@ -90,7 +105,8 @@ class Handler(BaseHTTPRequestHandler):
             req.add_header(name, value)
         if not req.has_header("User-Agent") or "python-urllib" in req.get_header("User-Agent", "").lower():
             req.add_header("User-Agent", "OpenGrok/1.0 (Mozilla/5.0)")
-        req.add_header("Authorization", "Bearer " + _KEY)
+        if _KEY:
+            req.add_header("Authorization", "Bearer " + _KEY)
         req.add_header("Accept-Encoding", "identity")
 
         try:
@@ -105,7 +121,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        except (URLError, TimeoutError, ConnectionError) as exc:
+        except Exception as exc:
             log.warning("upstream unreachable: %r", exc)
             self._simple(502, b'{"error":{"message":"hermes api_server unreachable","type":"hop_error"}}')
             return

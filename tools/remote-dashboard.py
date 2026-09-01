@@ -33,6 +33,46 @@ DEFAULT_HOST = Path("/home/box/sand-host/host-main.cjs")
 SESSION_LOG = Path("/tmp/opengrok-session.log")
 
 
+def ensure_hop_server():
+    """Ensure hop-server.py is running if bindings are configured."""
+    data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
+    bindings = get_bindings(data_dir)
+    if not bindings:
+        return
+    agent = (bindings.get("agents") or {}).get("*") or (
+        list((bindings.get("agents") or {}).values())[0] if bindings.get("agents") else None
+    )
+    if not agent or not agent.get("upstream"):
+        return
+
+    upstream = agent.get("upstream")
+    key_file = data_dir / ".api_key"
+    api_key = os.environ.get("API_SERVER_KEY", "")
+    if not api_key and key_file.is_file():
+        try:
+            api_key = key_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    try:
+        r = subprocess.run(["pgrep", "-f", "hop-server.py"], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return
+    except Exception:
+        pass
+
+    try:
+        env = os.environ.copy()
+        env["HERMES_HOP_UPSTREAM"] = upstream
+        env["HERMES_HOP_PORT"] = "18790"
+        env["HERMES_HOP_HOST"] = "127.0.0.1"
+        if api_key:
+            env["API_SERVER_KEY"] = api_key
+        subprocess.Popen([sys.executable, str(HERE / "hop-server.py")], env=env, start_new_session=True)
+    except Exception:
+        pass
+
+
 def get_tailscale_ip() -> str:
     """Try finding tailscale IP."""
     try:
@@ -631,6 +671,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/api/models":
             upstream = req_data.get("upstream", "").rstrip("/")
             api_key = req_data.get("apiKey", "") or os.environ.get("API_SERVER_KEY", "")
+            if not api_key:
+                key_file = (DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT) / ".api_key"
+                if key_file.is_file():
+                    try:
+                        api_key = key_file.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        pass
             if not upstream:
                 self._json(400, {"ok": False, "error": "upstream required"})
                 return
@@ -661,6 +708,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             upstream = req_data.get("upstream", "").rstrip("/")
             model = req_data.get("model", "")
             api_key = req_data.get("apiKey", "") or os.environ.get("API_SERVER_KEY", "")
+            if not api_key:
+                key_file = (DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT) / ".api_key"
+                if key_file.is_file():
+                    try:
+                        api_key = key_file.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        pass
             if not upstream or not model:
                 self._json(400, {"ok": False, "error": "upstream and model required"})
                 return
@@ -698,8 +752,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "upstream and model required"})
                 return
 
+            data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
+            data_dir.mkdir(parents=True, exist_ok=True)
+            key_file = data_dir / ".api_key"
+
             if api_key:
                 os.environ["API_SERVER_KEY"] = api_key
+                try:
+                    key_file.write_text(api_key.strip(), encoding="utf-8")
+                    key_file.chmod(0o600)
+                except Exception:
+                    pass
+            elif key_file.is_file():
+                try:
+                    api_key = key_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+            if not api_key:
+                api_key = os.environ.get("API_SERVER_KEY", "")
 
             # Auto-wrap if host-main.cjs not yet wrapped
             try:
@@ -711,8 +781,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 pass
 
             # Write model-bindings.json
-            data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
-            data_dir.mkdir(parents=True, exist_ok=True)
             bindings_path = data_dir / "model-bindings.json"
             hop_base = "http://127.0.0.1:18790/v1"
 
@@ -787,6 +855,7 @@ def main():
     ap.add_argument("--host", default="0.0.0.0", help="listen address (0.0.0.0 for Tailscale access)")
     args = ap.parse_args()
 
+    ensure_hop_server()
     ts_ip = get_tailscale_ip()
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"""
