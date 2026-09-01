@@ -4,6 +4,10 @@
 !*.example
 *token*
 credentials*
+.api_key
+*.key
+model-bindings.json
+!examples/model-bindings.example.json
 
 # Logs / runtime state
 *.log

@@ -357,7 +357,6 @@ PAGE_HTML = r"""<!doctype html>
       <h2>配置并切换模型</h2>
       <div class="quick-picks">
         <span style="font-size:12px; color:var(--text-muted); line-height:22px;">快捷预设:</span>
-        <span class="pill" onclick="setPreset('cpas')">CPAS (Claude 3.7)</span>
         <span class="pill" onclick="setPreset('deepseek')">DeepSeek V3</span>
         <span class="pill" onclick="setPreset('deepseek-r1')">DeepSeek R1</span>
         <span class="pill" onclick="setPreset('glm')">智谱 GLM-5.3</span>
@@ -368,7 +367,7 @@ PAGE_HTML = r"""<!doctype html>
 
       <div class="form-group">
         <label>上游 API 根地址 (Upstream Base URL, 无需加 /v1)</label>
-        <input type="text" id="upstreamUrl" placeholder="例如: https://api.deepseek.com 或 https://api.deepseek.com">
+        <input type="text" id="upstreamUrl" placeholder="例如: https://api.deepseek.com 或 https://api.openai.com">
       </div>
       <div class="grid" style="margin-bottom: 0;">
         <div class="form-group">
@@ -422,7 +421,6 @@ PAGE_HTML = r"""<!doctype html>
     let isInitialLoad = true;
 
     const PRESETS = {
-      'cpas': { url: 'https://api.deepseek.com', model: 'claude-sonnet-4-6' },
       'deepseek': { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
       'deepseek-r1': { url: 'https://api.deepseek.com', model: 'deepseek-reasoner' },
       'glm': { url: 'https://open.bigmodel.cn/api/paas', model: 'glm-5.3-flash' },
