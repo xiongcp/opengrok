@@ -106,11 +106,11 @@ function resolveBinding(args) {
       return models[req];
     }
     var modelKeys = Object.keys(models);
-    var wildcardKeys = modelKeys.filter(function (k) {
-      return k.indexOf("*") >= 0 || k.indexOf("?") >= 0;
-    });
+    var wildcardKeys = modelKeys.filter(
+      (k) => k.indexOf("*") >= 0 || k.indexOf("?") >= 0,
+    );
     // Specificity sort: fewer wildcards first, longer pattern first
-    wildcardKeys.sort(function (a, b) {
+    wildcardKeys.sort((a, b) => {
       var starA = (a.match(/\*/g) || []).length;
       var starB = (b.match(/\*/g) || []).length;
       if (starA !== starB) return starA - starB;
