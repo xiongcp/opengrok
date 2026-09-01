@@ -72,9 +72,16 @@ function resolveBinding(args) {
   }
   var ids = collectIds(args);
   for (var i = 0; i < ids.length; i++) {
-    if (agents[ids[i]]) return agents[ids[i]];
+    if (agents[ids[i]]) {
+      log("route binding matched agent=" + ids[i]);
+      return agents[ids[i]];
+    }
   }
-  if (agents["*"]) return agents["*"];
+  if (agents["*"]) {
+    // Surface unbound agent ids so the dashboard can offer one-click binding.
+    if (ids.length) log("route no agent match for [" + ids.join(", ") + "]; using '*'");
+    return agents["*"];
+  }
   return null;
 }
 

@@ -56,7 +56,9 @@ HERMES_CFG = _first_existing([
     str(HOME / ".hermes" / "config.yaml"),
 ])
 # Bindings — same candidate shapes setup.py writes/adopts (first existing wins).
-BINDINGS_CANDIDATES = [HOME / ".grokbot" / "model-bindings.json"]
+# The sandbox box keeps them in sand-data, not under $HOME.
+BINDINGS_CANDIDATES = [Path("/home/box/sand-data/model-bindings.json"),
+                       HOME / ".grokbot" / "model-bindings.json"]
 for _appdir in (HOME / "AppData" / "Roaming" / "Grok Bot",
                 HOME / ".config" / "Grok Bot",
                 HOME / "Library" / "Application Support" / "Grok Bot"):
@@ -71,6 +73,17 @@ def tcp(port: int) -> bool:
         s.settimeout(0.6)
         return s.connect_ex(("127.0.0.1", port)) == 0
 
+def _http_error_as_probe(e: urllib.error.HTTPError, want: str | None, url: str) -> tuple[bool, str]:
+    """An HTTP error status can still be the expected probe answer (e.g. 401
+    proves the hermes api_server is up and enforcing auth)."""
+    expected = -1
+    if want:
+        try:
+            expected = int(want)
+        except ValueError:
+            expected = -1
+    return e.code == expected, f"HTTP {e.code} @{url}"
+
 def probe_url(url: str, want: str | None = None) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(url, timeout=4) as r:
@@ -79,7 +92,7 @@ def probe_url(url: str, want: str | None = None) -> tuple[bool, str]:
                 return False, f"unexpected body @ {url}"
             return True, f"{r.getcode()} @{url}"
     except urllib.error.HTTPError as e:
-        return (e.code == int(want or -1)), f"HTTP {e.code} @{url}"
+        return _http_error_as_probe(e, want, url)
     except Exception as exc:
         return False, f"{type(exc).__name__} @{url}"
 
@@ -100,16 +113,27 @@ if SERVICES_CFG:
     except Exception:
         print("[WARN] services.json unreadable — using built-in defaults", file=sys.stderr)
         SERVICES_CFG = None
-if not SERVICES_CFG:  # fallback: our production table (kept so doctor works out-of-box for us)
-    EXPECTED_UP = [
-        (8642,  "hermes api_server", lambda: probe_url("http://127.0.0.1:8642/v1/models", "401")),
-        (18790, "hermes-hop",        lambda: probe_url("http://127.0.0.1:18790/healthz", '"upstream_reachable": true')),
-        (18776, "claude-shim",       None),
-        (18777, "codex-shim",        None),
-        (18778, "antigravity-shim",  None),
-        (18779, "grok-shim",         lambda: probe_url("http://127.0.0.1:18779/health")),
-        (30000, "llama-server slot",  lambda: probe_url("http://127.0.0.1:30000/v1/models", '"models"')),  # identity-agnostic: slot serves qwen/ornith per season; body must be a models list
-    ]
+# Profile detection: the sandbox box runs ONLY the opengrok hop + dashboard;
+# the full hermes/shims/llama table belongs to the local operator machine.
+ON_BOX = Path("/home/box/sand-data").is_dir() or Path("/home/box/sand-host/host-main.cjs").is_file()
+BOX_HOST = Path("/home/box/sand-host/host-main.cjs")
+
+if not SERVICES_CFG:  # fallback: built-in table matched to the machine profile
+    if ON_BOX:
+        EXPECTED_UP = [
+            (18790, "hermes-hop",       lambda: probe_url("http://127.0.0.1:18790/healthz", '"upstream_reachable": true')),
+            (8888,  "remote-dashboard", None),
+        ]
+    else:
+        EXPECTED_UP = [
+            (8642,  "hermes api_server", lambda: probe_url("http://127.0.0.1:8642/v1/models", "401")),
+            (18790, "hermes-hop",        lambda: probe_url("http://127.0.0.1:18790/healthz", '"upstream_reachable": true')),
+            (18776, "claude-shim",       None),
+            (18777, "codex-shim",        None),
+            (18778, "antigravity-shim",  None),
+            (18779, "grok-shim",         lambda: probe_url("http://127.0.0.1:18779/health")),
+            (30000, "llama-server slot",  lambda: probe_url("http://127.0.0.1:30000/v1/models", '"models"')),  # identity-agnostic: slot serves qwen/ornith per season; body must be a models list
+        ]
 
 WATCHED_FILES = [BINDINGS]
 WATCHED_CFG = next((p for p in SERVICES_CFG_CANDIDATES if (p.parent / "watched-files.json").exists()), None)
@@ -174,10 +198,36 @@ def check_bindings() -> dict:
     # local hop that doctor owns IS a real outage.
     expected_ports = {p for p, _n, _pr in EXPECTED_UP}
     txt = BINDINGS.read_text(encoding="utf-8")
-    for port in sorted({int(m.group(1)) for m in re.finditer(r"127\.0\.0\.1:(\d+)", txt)}):
+    ports = set()
+    for m in re.finditer(r"127\.0\.0\.1:(\d+)", txt):
+        try:
+            ports.add(int(m.group(1)))
+        except ValueError:
+            continue
+    for port in sorted(ports):
         if port in expected_ports and not tcp(port):
             emit("FAIL", "bindings:liveness-coupling", f":{port} bindings route here but NOT LISTENING")
     return meta
+
+def check_box_wrap() -> None:
+    """Box-only: the sandbox supervisor can regenerate host-main.cjs from a
+    pristine copy on restart, silently dropping the opengrok injection."""
+    if not ON_BOX:
+        return
+    if not BOX_HOST.is_file():
+        emit("WARN", "wrap:host", f"{BOX_HOST} not found")
+        return
+    try:
+        txt = BOX_HOST.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        emit("WARN", "wrap:host", f"unreadable: {exc}")
+        return
+    if "opengrok-runtime" in txt:
+        emit("PASS", "wrap:host", "opengrok runtime injected")
+    elif "createProtoSession" in txt:
+        emit("FAIL", "wrap:host", "host-main.cjs NOT wrapped (supervisor restored stock copy? run install or wait for watchdog)")
+    else:
+        emit("WARN", "wrap:host", "unrecognized host layout")
 
 def check_config() -> dict:
     txt = HERMES_CFG.read_text(encoding="utf-8") if HERMES_CFG.exists() else ""
@@ -254,16 +304,26 @@ def try_fix(dead_names: list[str]) -> None:
 def run(fix: bool) -> tuple[int, str]:
     check_services()
     bmeta = check_bindings()
-    cfgflags = check_config()
-    gcache = check_grok_cache()
-    check_persistence()
+    if ON_BOX:
+        # Box profile: hermes config, grok cache and VBS persistence are all
+        # local-operator concerns; the wrap state is the box-specific risk.
+        check_box_wrap()
+        cfgflags, gcache = {}, {}
+    else:
+        cfgflags = check_config()
+        gcache = check_grok_cache()
+        check_persistence()
     file_shas = {}
     for p in WATCHED_FILES:
         file_shas[str(p)] = sha(p) if p.exists() else "MISSING"
 
     base: dict = {}
     if BASELINE.exists():
-        base = json.loads(BASELINE.read_text(encoding="utf-8"))
+        try:
+            base = json.loads(BASELINE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            emit("WARN", "baseline", "baseline.json unreadable — treating as empty")
+            base = {}
 
     # diffs vs baseline
     kbase = base.get("files", {})

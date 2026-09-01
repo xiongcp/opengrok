@@ -79,7 +79,18 @@ def write_bindings(path: Path, model: str, hop_base: str, agent_id: str) -> None
             {"id": "thinking", "value": "true"},
         ],
     }
-    agents[agent_id] = entry
+    existing = agents.get(agent_id)
+    if isinstance(existing, dict) and existing.get("modelId"):
+        # Non-destructive: an agent that is already configured keeps its
+        # model/upstream/parameters. The installer only refreshes the hop
+        # pointer it owns — silently replacing a user's binding with the
+        # default model is exactly the kind of surprise this tool exists to
+        # prevent.
+        existing["hopBaseUrl"] = hop_base
+        existing.setdefault("provider", "custom")
+        print("  bindings: kept existing agents[%s] (%s)" % (agent_id, existing.get("modelId")))
+    else:
+        agents[agent_id] = entry
     if "*" not in agents:
         agents["*"] = dict(entry)
         agents["*"]["name"] = model + " (wildcard)"
