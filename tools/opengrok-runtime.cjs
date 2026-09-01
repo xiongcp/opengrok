@@ -50,7 +50,7 @@ function collectIds(args) {
   return ids;
 }
 
-function loadAgents() {
+function loadConfig() {
   var raw = fs.readFileSync(BINDINGS, "utf8");
   var data = {};
   try {
@@ -59,23 +59,33 @@ function loadAgents() {
     void _e;
     data = {};
   }
-  return (data && data.agents) || {};
+  return data && typeof data === "object" ? data : {};
 }
 
 function resolveBinding(args) {
-  var agents;
+  var data;
   try {
-    agents = loadAgents();
+    data = loadConfig();
   } catch (e) {
     log("bindings unreadable: " + e.message);
     return null;
   }
+  var agents = data.agents || {};
   var ids = collectIds(args);
   for (var i = 0; i < ids.length; i++) {
     if (agents[ids[i]]) {
       log("route binding matched agent=" + ids[i]);
       return agents[ids[i]];
     }
+  }
+  // Model lane: rewrite one specific client-requested (native) slug to a
+  // custom upstream route — or pin it native via {"provider":"native"}.
+  // Precedence: agent UUID > models[slug] > agents["*"] > native fallback.
+  var req = requestedModelId(args);
+  var models = data.models || {};
+  if (req && models[req]) {
+    log("route model-map " + req);
+    return models[req];
   }
   if (agents["*"]) {
     // Surface unbound agent ids so the dashboard can offer one-click binding.

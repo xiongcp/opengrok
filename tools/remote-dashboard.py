@@ -227,6 +227,34 @@ def list_sandbox_agents() -> list:
     return out
 
 
+_slug_cache = {"host_mtime": 0.0, "log_mtime": 0.0, "native": [], "observed": []}
+
+
+def model_slug_candidates() -> dict:
+    """Client-side model slugs for the models-map dropdown: native menu entries
+    extracted from the host bundle + slugs actually observed in the routing
+    log. Both mtime-cached (the host file is ~25MB)."""
+    try:
+        if DEFAULT_HOST.is_file():
+            mt = DEFAULT_HOST.stat().st_mtime
+            if mt != _slug_cache["host_mtime"]:
+                txt = DEFAULT_HOST.read_text(encoding="utf-8", errors="replace")
+                slugs = sorted(set(re.findall(r'"(grok-[0-9][0-9a-zA-Z.-]*)"', txt)))
+                _slug_cache.update(host_mtime=mt, native=slugs)
+    except Exception:
+        pass
+    try:
+        if SESSION_LOG.is_file():
+            mt = SESSION_LOG.stat().st_mtime
+            if mt != _slug_cache["log_mtime"]:
+                txt = SESSION_LOG.read_text(encoding="utf-8", errors="replace")
+                obs = sorted(set(re.findall(r"requested=([a-zA-Z0-9._-]+)", txt)))
+                _slug_cache.update(log_mtime=mt, observed=obs)
+    except Exception:
+        pass
+    return {"native": _slug_cache["native"], "observed": _slug_cache["observed"]}
+
+
 # --- host-wrap watchdog ------------------------------------------------------
 # The sandbox supervisor may regenerate host-main.cjs from a pristine copy when
 # it restarts the host, silently dropping the opengrok injection. The watchdog
@@ -541,6 +569,7 @@ PAGE_HTML = r"""<!doctype html>
   <nav class="tabs">
     <button class="tab active" data-tab="primary" onclick="switchTab('primary',this)">🌟 主力模型</button>
     <button class="tab" data-tab="agents" onclick="switchTab('agents',this)">🤖 Agent 路由</button>
+    <button class="tab" data-tab="models" onclick="switchTab('models',this)">🧩 模型映射</button>
     <button class="tab" data-tab="adaptive" onclick="switchTab('adaptive',this)">⚡ 自适应深度</button>
     <button class="tab" data-tab="system" onclick="switchTab('system',this)">🛠️ 系统运维</button>
     <button class="tab" data-tab="logs" onclick="switchTab('logs',this)">📜 实时日志</button>
@@ -618,6 +647,18 @@ PAGE_HTML = r"""<!doctype html>
       <table>
         <thead><tr><th>Agent</th><th>别名</th><th>模型</th><th>推理</th><th style="width:130px">操作</th></tr></thead>
         <tbody id="agentsBody"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 模型映射 -->
+  <section id="tab-models" class="panel">
+    <div class="card">
+      <h2>模型映射 <button class="btn sm" onclick="openMapModal(null)">＋ 新增映射</button></h2>
+      <div class="hint">把客户端请求的<b>原生模型</b>逐个接管到自有渠道，或显式保留原生。优先级：Agent UUID 绑定 &gt; 模型映射 &gt; 全局默认 <code>*</code> &gt; 原生兜底。保存后<b>下回合自动生效</b>，全程无需重启。</div>
+      <table>
+        <thead><tr><th>请求模型 (slug)</th><th>路由目标</th><th>实际模型</th><th>推理</th><th style="width:130px">操作</th></tr></thead>
+        <tbody id="modelsBody"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -745,6 +786,46 @@ PAGE_HTML = r"""<!doctype html>
   </div>
 </div>
 
+<!-- 模型映射 modal -->
+<div class="modal-mask" id="mapModal" onclick="if(event.target===this)closeMapModal()">
+  <div class="modal">
+    <h3 id="mapModalTitle">新增模型映射</h3>
+    <div class="fg">
+      <label>请求模型 slug（客户端选的原生模型）</label>
+      <input id="inMapSlug" list="slugList" class="mono" placeholder="grok-4.5-high / sand-default / gemini-2.5-flash">
+      <datalist id="slugList"></datalist>
+      <div class="help">候选 = 日志实际观测到的 slug ∪ host 内置模型菜单；也可自由输入。</div>
+    </div>
+    <div class="fg">
+      <label>路由目标</label>
+      <select id="selMapTarget" onchange="onMapTarget()">
+        <option value="hop">自定义渠道（接管到您的上游模型）</option>
+        <option value="native">原生 Grok（显式保留沙箱内置模型）</option>
+      </select>
+      <div class="help" id="mapTargetHelp">该模型的请求将由您的自有渠道承接。</div>
+    </div>
+    <div id="mapHopFields">
+      <div class="fg">
+        <label>实际模型</label>
+        <input id="inMapModel" list="modelList" placeholder="glm-5.3-flash">
+      </div>
+      <div class="fg">
+        <label>推理深度</label>
+        <select id="selMapEffort">
+          <option value="high">high · 深度思考</option>
+          <option value="xhigh">xhigh / max</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" onclick="closeMapModal()">取消</button>
+      <button class="btn" onclick="saveMapFromModal(this)">确认保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 let globalBindings = {agents:{}};
@@ -753,6 +834,8 @@ let sandboxAgents = [];
 let rawLogText = '';
 let logLevel = 'all';
 let editingAgentKey = null;
+let editingMapSlug = null;
+let slugCandidates = {native: [], observed: []};
 
 const PRESETS = {
   'xai-grok4':  {url:'https://api.x.ai/v1', model:'grok-4.6', effort:'high', desc:'xAI Grok-4.6'},
@@ -893,14 +976,13 @@ async function saveAndApply(btn){
   const effort = $('selEffort').value;
   const fast = $('swFast').checked;
   if (!upstream || !model){ toast('err', '请完整填写上游根地址和模型标识'); return; }
-  if (!confirm('保存将热重启 sand-host（进行中的会话会被中断）。继续吗？')) return;
-  setBusy(btn, true, '保存并重启中…');
-  const t = toast('info', '正在写入配置并热重启沙箱服务…');
+  setBusy(btn, true, '保存中…');
+  const t = toast('info', '正在写入配置（热生效，无需重启）…');
   try{
     const d = await api('/api/save', {upstream, model, apiKey, effort, fast});
     t.remove();
     if (d.ok){
-      toast('ok', '配置已应用，宿主进程已重启');
+      toast('ok', '配置已保存，下一回合自动生效（无需重启）');
       $('inKey').value = '';
       setTimeout(() => refreshStatus(false), 1500);
     } else toast('err', '保存失败：' + (d.error || '未知错误'));
@@ -1068,10 +1150,123 @@ async function syncFullBindings(btn){
   try{
     const d = await api('/api/save-bindings', {bindings: globalBindings});
     t.remove();
-    if (d.ok){ toast('ok', 'Agent 路由配置已更新'); refreshStatus(false); }
+    if (d.ok){ toast('ok', '配置已保存，下一回合自动生效（热加载）'); refreshStatus(false); }
     else toast('err', '保存失败：' + (d.error || '未知错误'));
   }catch(e){ t.remove(); toast('err', '请求异常：' + e.message); }
   setBusy(btn, false);
+}
+
+/* ---------- models map tab ---------- */
+function renderModels(){
+  const models = globalBindings.models || {};
+  const tbody = $('modelsBody');
+  const keys = Object.keys(models);
+  if (!keys.length){
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted)">暂无映射（所有模型按 Agent 规则路由）</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  keys.sort().forEach(k => {
+    const m = models[k] || {};
+    const tr = document.createElement('tr');
+    const isNative = m.provider === 'native';
+    const eff = paramOf(m, 'effort') || 'default';
+    tr.innerHTML =
+      '<td data-th="请求模型"><code>' + esc(k) + '</code></td>' +
+      '<td data-th="路由目标">' + (isNative ? '<b style="color:var(--ok)">🌀 原生保留</b>' : '<b style="color:var(--info)">自定义渠道</b>') + '</td>' +
+      '<td data-th="实际模型">' + (isNative ? '<span style="color:var(--muted)">跟随客户端原生行为</span>' : '<b style="color:var(--info)">' + esc(m.modelId || '-') + '</b>') + '</td>' +
+      '<td data-th="推理">' + (isNative ? '<span style="font-size:12px;color:var(--muted)">—</span>' : '<span class="tag' + (eff === 'high' || eff === 'xhigh' ? ' hi' : '') + '">effort=' + esc(eff) + '</span>') + '</td>' +
+      '<td data-th="操作"><button class="btn ghost sm" onclick="openMapModal(\'' + esc(k) + '\')">编辑</button> <button class="btn danger sm" onclick="deleteMap(\'' + esc(k) + '\')">删除</button></td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function onMapTarget(){
+  const native = $('selMapTarget').value === 'native';
+  $('mapHopFields').style.display = native ? 'none' : 'block';
+  $('mapTargetHelp').textContent = native
+    ? '该模型的请求保持沙箱原生行为，即使全局默认被接管也不受影响。'
+    : '该模型的请求将由您的自有渠道承接。';
+}
+
+function buildSlugList(){
+  const dl = $('slugList');
+  dl.innerHTML = '';
+  const used = new Set(Object.keys(globalBindings.models || {}));
+  const seen = new Set();
+  slugCandidates.observed.forEach(s => {
+    if (used.has(s) || seen.has(s)) return;
+    seen.add(s);
+    const o = document.createElement('option'); o.value = s; o.label = '🛰 日志观测'; dl.appendChild(o);
+  });
+  slugCandidates.native.forEach(s => {
+    if (used.has(s) || seen.has(s)) return;
+    seen.add(s);
+    const o = document.createElement('option'); o.value = s; o.label = '📦 内置菜单'; dl.appendChild(o);
+  });
+}
+
+function openMapModal(editSlug){
+  editingMapSlug = editSlug;
+  buildSlugList();
+  if (editSlug){
+    $('mapModalTitle').textContent = '编辑模型映射';
+    $('inMapSlug').value = editSlug;
+    $('inMapSlug').readOnly = true;
+    const m = (globalBindings.models || {})[editSlug] || {};
+    const isNative = m.provider === 'native';
+    $('selMapTarget').value = isNative ? 'native' : 'hop';
+    $('inMapModel').value = m.modelId || '';
+    $('selMapEffort').value = paramOf(m, 'effort') || 'high';
+  } else {
+    $('mapModalTitle').textContent = '新增模型映射';
+    $('inMapSlug').value = '';
+    $('inMapSlug').readOnly = false;
+    $('selMapTarget').value = 'hop';
+    $('inMapModel').value = '';
+    $('selMapEffort').value = 'high';
+  }
+  onMapTarget();
+  $('mapModal').classList.add('open');
+}
+
+function closeMapModal(){ $('mapModal').classList.remove('open'); }
+
+async function saveMapFromModal(btn){
+  const slug = editingMapSlug || $('inMapSlug').value.trim();
+  const target = $('selMapTarget').value;
+  const model = $('inMapModel').value.trim();
+  const effort = $('selMapEffort').value;
+  if (!slug){ toast('err', '请填写请求模型 slug'); return; }
+  if (!/^[a-zA-Z0-9._-]+$/.test(slug)){ toast('err', 'slug 只能包含字母、数字和 . _ -'); return; }
+  if (target !== 'native' && !model){ toast('err', '请填写实际模型'); return; }
+  if (!globalBindings.models) globalBindings.models = {};
+  if (target === 'native'){
+    globalBindings.models[slug] = {provider: 'native'};
+  } else {
+    const prev = globalBindings.models[slug] || {};
+    globalBindings.models[slug] = Object.assign({}, prev, {
+      modelId: model,
+      provider: 'custom',
+      hopBaseUrl: prev.hopBaseUrl || 'http://127.0.0.1:18790/v1',
+      parameters: [{id:'effort', value:effort}, {id:'thinking', value:'true'}],
+    });
+  }
+  closeMapModal();
+  await syncFullBindings(btn);
+}
+
+async function deleteMap(slug){
+  if (!confirm('确定删除模型映射 [' + slug + '] 吗？该模型将回退到 Agent 规则 / 全局默认。')) return;
+  delete (globalBindings.models || {})[slug];
+  await syncFullBindings(null);
+}
+
+async function fetchSlugs(){
+  try{
+    const d = await api('/api/model-slugs');
+    if (d.ok) slugCandidates = {native: d.native || [], observed: d.observed || []};
+  }catch(e){}
 }
 
 /* ---------- adaptive ---------- */
@@ -1195,7 +1390,7 @@ async function refreshStatus(syncForm){
     else if (d.wrapped === false) setBadge($('badgeWrap'), $('badgeWrapT'), 'off', '包装 缺失 ⚠️');
     else setBadge($('badgeWrap'), $('badgeWrapT'), 'idle', '包装 检测中');
 
-    globalBindings = d.bindings || {agents:{}};
+    globalBindings = d.bindings || {agents:{}, models:{}};
     const agent = (globalBindings.agents && (globalBindings.agents['*'] || Object.values(globalBindings.agents)[0])) || {};
     $('statModel').textContent = agent.modelId || '未配置';
     const eff = paramOf(agent, 'effort');
@@ -1231,6 +1426,7 @@ async function refreshStatus(syncForm){
     }
 
     renderAgents();
+    renderModels();
 
     if (syncForm || !$('inUpstream').value){
       if (agent.upstream) $('inUpstream').value = agent.upstream;
@@ -1254,13 +1450,16 @@ async function fetchRecentAgents(){
       recentAgentIds = d.recent_ids || [];
       sandboxAgents = d.sandbox_agents || [];
       renderAgents();
+      renderModels();
     }
   }catch(e){}
 }
 
 refreshStatus(true);
 fetchRecentAgents();
+fetchSlugs();
 setInterval(fetchRecentAgents, 30000);
+setInterval(fetchSlugs, 30000);
 setInterval(() => { if (!document.hidden) refreshStatus(false); }, 6000);
 </script>
 </body>
@@ -1318,7 +1517,9 @@ class Handler(BaseHTTPRequestHandler):
             # agents from the sandbox store, plus UUIDs recently observed in
             # the routing log (one-click binding).
             data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
-            agents = (get_bindings(data_dir).get("agents") or {})
+            bdoc = get_bindings(data_dir)
+            agents = bdoc.get("agents") or {}
+            models_map = bdoc.get("models") or {}
             named = list_sandbox_agents()
             known = {a["id"].lower() for a in named} | {k.lower() for k in agents}
             recent, seen = [], set(known)
@@ -1337,9 +1538,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "ok": True,
                 "agents": agents,
+                "models": models_map,
                 "sandbox_agents": named,
                 "recent_ids": recent[-20:],
             })
+            return
+
+        if self.path == "/api/model-slugs":
+            self._json(200, {"ok": True, **model_slug_candidates()})
             return
 
         if self.path == "/api/doctor":
@@ -1455,10 +1661,15 @@ class Handler(BaseHTTPRequestHandler):
             data_dir.mkdir(parents=True, exist_ok=True)
             bindings_path = data_dir / "model-bindings.json"
             try:
+                # Defensive merge: a stale cached page may post an agents-only
+                # document — never silently drop the models map.
+                if "models" not in new_bindings:
+                    prev_doc = get_bindings(data_dir)
+                    if prev_doc.get("models"):
+                        new_bindings["models"] = prev_doc["models"]
                 atomic_write_json(bindings_path, new_bindings)
-                # restart sand-host
-                subprocess.run(["pkill", "-f", "host-main.cjs"], capture_output=True)
-                self._json(200, {"ok": True})
+                # Hot: the runtime re-reads bindings on every turn — no restart.
+                self._json(200, {"ok": True, "hot": True})
             except Exception as e:
                 self._json(500, {"ok": False, "error": str(e)})
             return
@@ -1531,27 +1742,17 @@ class Handler(BaseHTTPRequestHandler):
 
             bdoc = {
                 "_comment": "configured via opengrok remote-dashboard",
-                "agents": existing_agents
+                "agents": existing_agents,
+                "models": existing_bindings.get("models") or {},
             }
             atomic_write_json(bindings_path, bdoc)
 
-            # Launch / restart hop-server if on box
-            try:
-                subprocess.run(["pkill", "-f", "hop-server.py"], capture_output=True)
-                env = os.environ.copy()
-                env["HERMES_HOP_UPSTREAM"] = upstream
-                env["HERMES_HOP_PORT"] = "18790"
-                env["HERMES_HOP_HOST"] = "127.0.0.1"
-                if api_key:
-                    env["API_SERVER_KEY"] = api_key
-                subprocess.Popen([sys.executable, str(HERE / "hop-server.py")], env=env, start_new_session=True)
-            except Exception:
-                pass
+            # Hot path: the runtime re-reads bindings every turn and hop-server
+            # hot-reads upstream/key per request — nothing to bounce. Just make
+            # sure hop is up (no-op when already running).
+            ensure_hop_server()
 
-            # Bounce sand-host so it takes effect
-            subprocess.run(["pkill", "-f", "host-main.cjs"], capture_output=True)
-
-            self._json(200, {"ok": True})
+            self._json(200, {"ok": True, "hot": True})
             return
 
         if self.path == "/api/restart-host":

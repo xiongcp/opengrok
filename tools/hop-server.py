@@ -44,7 +44,11 @@ try:
     PORT = int(os.environ.get("HERMES_HOP_PORT", "18790"))
 except Exception:
     PORT = 18790
-UPSTREAM = os.environ.get("HERMES_HOP_UPSTREAM", "http://127.0.0.1:8642").rstrip("/")
+UPSTREAM_ENV = os.environ.get("HERMES_HOP_UPSTREAM", "").strip().rstrip("/")
+_DEFAULT_UPSTREAM = "http://127.0.0.1:8642"
+BINDINGS_FILE = Path(
+    os.environ.get("OPENGROK_BINDINGS", "/home/box/sand-data/model-bindings.json")
+)
 try:
     _TIMEOUT = float(os.environ.get("HERMES_HOP_TIMEOUT", "1800"))  # long agent turns
 except Exception:
@@ -53,16 +57,32 @@ _MAX_BODY = 64 * 1024 * 1024
 _VERSION_SUFFIX = re.compile(r"/v\d+$")
 
 
-def upstream_url(path: str) -> str:
-    """Join UPSTREAM with an incoming path without duplicating the API version segment.
+def current_upstream() -> str:
+    """Hot-read the upstream so a channel swap applies to the very next
+    request — restarting this relay would needlessly drop in-flight streams.
+    Source order: model-bindings.json agents['*'].upstream (dashboard-written,
+    atomic) > launch-time env > built-in default."""
+    try:
+        doc = json.loads(BINDINGS_FILE.read_text(encoding="utf-8"))
+        star = (doc.get("agents") or {}).get("*") or {}
+        u = str(star.get("upstream") or "").strip()
+        if u:
+            return u.rstrip("/")
+    except Exception:
+        pass
+    return UPSTREAM_ENV or _DEFAULT_UPSTREAM
+
+
+def upstream_url(path: str, upstream: str) -> str:
+    """Join upstream with an incoming path without duplicating the API version segment.
 
     Clients reach this shim through hopBaseUrl ".../v1", so every relayed path
     starts with "/v1/". An upstream that already carries its own version suffix
     ("https://api.x.ai/v1", ".../paas/v4") must not get a second one.
     """
-    if path.startswith("/v1/") and _VERSION_SUFFIX.search(UPSTREAM):
-        return UPSTREAM + path[len("/v1"):]
-    return UPSTREAM + path
+    if path.startswith("/v1/") and _VERSION_SUFFIX.search(upstream):
+        return upstream + path[len("/v1"):]
+    return upstream + path
 
 
 def load_key() -> str:
@@ -89,9 +109,6 @@ def load_key() -> str:
     return ""
 
 
-_KEY = ""  # set in main()
-
-
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "hermes-hop/1"
@@ -110,7 +127,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length) if length else None
 
-        url = upstream_url(self.path)
+        url = upstream_url(self.path, current_upstream())
+        key = load_key()  # hot-read: a key swap must not require a restart
         req = urllib.request.Request(url, data=body, method=self.command)
         for name, value in self.headers.items():
             lname = name.lower()
@@ -119,14 +137,16 @@ class Handler(BaseHTTPRequestHandler):
             req.add_header(name, value)
         if not req.has_header("User-Agent") or "python-urllib" in req.get_header("User-Agent", "").lower():
             req.add_header("User-Agent", "OpenGrok/1.0 (Mozilla/5.0)")
-        if _KEY:
-            req.add_header("Authorization", "Bearer " + _KEY)
+        if key:
+            req.add_header("Authorization", "Bearer " + key)
         req.add_header("Accept-Encoding", "identity")
 
         try:
             resp = urllib.request.urlopen(req, timeout=_TIMEOUT)
         except HTTPError as exc:
-            payload = exc.read() or b""
+            payload = exc.read()
+            if not payload:
+                payload = b""
             self.send_response(exc.code)
             ctype = exc.headers.get("Content-Type") if exc.headers else None
             if ctype:
@@ -193,11 +213,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _probe_upstream() -> bool:
+    up = current_upstream()
+    key = load_key()
     for path in ("/health", "/healthz", "/v1/models", ""):
         try:
             req = urllib.request.Request(
-                upstream_url(path),
-                headers={"User-Agent": "OpenGrok/1.0 (Mozilla/5.0)", "Authorization": "Bearer " + _KEY}
+                upstream_url(path, up),
+                headers={"User-Agent": "OpenGrok/1.0 (Mozilla/5.0)", "Authorization": "Bearer " + key}
             )
             with urllib.request.urlopen(req, timeout=3) as r:
                 return r.getcode() < 500
@@ -211,12 +233,10 @@ def _probe_upstream() -> bool:
 
 
 def main() -> None:
-    global _KEY
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    _KEY = load_key()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
-    log.info("hermes-hop listening http://%s:%s -> %s (key loaded, len=%d)",
-             HOST, PORT, UPSTREAM, len(_KEY))
+    log.info("hermes-hop listening http://%s:%s -> %s (key loaded, len=%d; config hot-read per request)",
+             HOST, PORT, current_upstream(), len(load_key()))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

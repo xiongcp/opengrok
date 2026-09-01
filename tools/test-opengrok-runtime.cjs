@@ -177,6 +177,91 @@ var wrapped = rtHop.wrapSession(stockFn, turnArgs);
 assert.notEqual(wrapped, stockSentinel);
 assert.equal(wrapped.opengrok, true);
 assert.equal(wrapped.getModelId(), "glm-5.3-flash");
+
+// 4. models map: models[slug] beats agents["*"]; native pin; unmapped -> "*".
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({
+    agents: {
+      "*": {
+        modelId: "gemini-3.7-flash-high",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+    models: {
+      "grok-4.5-high": {
+        modelId: "glm-5.3-flash",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+      "grok-4.6": { provider: "native" },
+    },
+  }),
+);
+var rtModels = rerequire(tmpB);
+var m1 = rtModels.wrapSession(stockFn, [{}, { modelId: "grok-4.5-high" }]);
+assert.equal(
+  m1.getModelId(),
+  "glm-5.3-flash",
+  "models[slug] must beat agents['*']",
+);
+assert.equal(
+  rtModels.wrapSession(stockFn, [{}, { modelId: "grok-4.6" }]),
+  stockSentinel,
+  "models[slug] provider=native must return the stock provider",
+);
+var m3 = rtModels.wrapSession(stockFn, [{}, { modelId: "sand-default" }]);
+assert.equal(
+  m3.getModelId(),
+  "gemini-3.7-flash-high",
+  "unmapped slug must fall back to agents['*']",
+);
+
+// 5. agent UUID binding still beats the models map (most specific wins).
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({
+    agents: {
+      "2b030fcf-efe6-4115-9078-01b009a2379f": {
+        modelId: "claude-opus-x",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+      "*": {
+        modelId: "gemini-3.7-flash-high",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+    models: {
+      "grok-4.5-high": {
+        modelId: "glm-5.3-flash",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+  }),
+);
+var rtPrec = rerequire(tmpB);
+var m4 = rtPrec.wrapSession(stockFn, [
+  { agentId: "2b030fcf-efe6-4115-9078-01b009a2379f" },
+  { modelId: "grok-4.5-high" },
+]);
+assert.equal(
+  m4.getModelId(),
+  "claude-opus-x",
+  "agent UUID binding must beat models[slug]",
+);
+
+// 6. empty config entirely -> native passthrough, never a thrown turn.
+fs2.writeFileSync(tmpB, JSON.stringify({ agents: {}, models: {} }));
+var rtEmpty = rerequire(tmpB);
+assert.equal(
+  rtEmpty.wrapSession(stockFn, [{}, { modelId: "grok-4.5-high" }]),
+  stockSentinel,
+  "empty config must degrade to native",
+);
 fs2.unlinkSync(tmpB);
 
 console.log("opengrok-runtime: ok");

@@ -8,8 +8,10 @@ used to produce a 404 while the dashboard probe (which normalizes /v1 itself)
 still reported the endpoint healthy.
 """
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -43,12 +45,35 @@ def load(upstream: str):
 def main() -> int:
     failed = 0
     for upstream, path, expected in CASES:
-        got = load(upstream).upstream_url(path)
+        got = load(upstream).upstream_url(path, upstream)
         if got == expected:
             print("PASS %s + %s" % (upstream, path))
         else:
             failed += 1
             print("FAIL %s + %s -> %s (want %s)" % (upstream, path, got, expected))
+
+    # Hot-read: bindings file (dashboard-written) must win over the
+    # launch-time env, and its absence must fall back to that env — this is
+    # what makes channel swaps restart-free.
+    tmpdir = Path(tempfile.mkdtemp())
+    bf = tmpdir / "model-bindings.json"
+    bf.write_text(json.dumps({"agents": {"*": {"upstream": "https://hot.example/v1"}}}))
+    os.environ["OPENGROK_BINDINGS"] = str(bf)
+    mod = load("http://env-fallback:1")
+    got = mod.current_upstream()
+    if got == "https://hot.example/v1":
+        print("PASS hot-read: bindings upstream beats env")
+    else:
+        failed += 1
+        print("FAIL hot-read -> %s (want https://hot.example/v1)" % got)
+    bf.unlink()
+    got = mod.current_upstream()
+    if got == "http://env-fallback:1":
+        print("PASS hot-read: missing bindings falls back to env")
+    else:
+        failed += 1
+        print("FAIL hot-read fallback -> %s (want http://env-fallback:1)" % got)
+
     print("hop-server: %s" % ("ok" if not failed else "%d fail" % failed))
     return 1 if failed else 0
 
