@@ -28,7 +28,7 @@
 computer, not only on your laptop. Full write-up: [STOCK-HOST](docs/STOCK-HOST.md).
 
 ```bash
-git clone https://github.com/aaravarr/opengrok
+git clone https://github.com/OnlyTerp/opengrok
 cd opengrok
 export API_SERVER_KEY='your-provider-key'
 python3 tools/install-stock-box.py \
@@ -38,6 +38,22 @@ python3 tools/install-stock-box.py \
 
 Bounce `sand-host`, then send a normal message in the Bot. Proof is
 `/tmp/opengrok-session.log` and traffic on `127.0.0.1:18790`.
+
+### 🌐 Remote Management via Tailscale
+
+If you have Tailscale installed on the Grok Bot box, launch the remote Web Dashboard:
+
+```bash
+python3 tools/remote-dashboard.py --port 8888 --host 0.0.0.0
+```
+
+Open `http://<tailscale-ip>:8888` on your phone or laptop on the same Tailnet to:
+- Switch models & upstream endpoints with one click
+- Test live model connectivity
+- Re-wrap Grok Bot host after updates
+- Watch real-time `/tmp/opengrok-session.log` session logs
+
+See [REMOTE-TAILSCALE](docs/REMOTE-TAILSCALE.md) for the complete guide.
 
 `python setup.py` on your Mac still builds bindings and the picker. That
 does **not** make stock Grok Bot read them. `apply-box-patch.py` refuses a
@@ -159,7 +175,7 @@ See [voice/README.md](voice/README.md) · [voice/SETUP.md](voice/SETUP.md).
 - Private OpenAI-hop host: `apply-box-patch.py` (refuses stock bundles)
 - Maps live-verified: Grok, GLM, Claude plans, Gemini (incl. fast lane), DeepSeek, local llama.cpp
 - Pattern proven, capture pending: OpenRouter, Groq, Mistral, xAI OAuth
-- Docs: [STOCK-HOST](docs/STOCK-HOST.md) · [MODEL-GUIDELINES](docs/MODEL-GUIDELINES.md) · [BYOK vs hop](docs/BYOK-DECISION.md) · [FAILURE-MODES](docs/FAILURE-MODES.md) · [CLOUD-HOST](docs/CLOUD-HOST.md) · [ROADMAP](docs/ROADMAP.md)
+- Docs: [STOCK-HOST](docs/STOCK-HOST.md) · [REMOTE-TAILSCALE](docs/REMOTE-TAILSCALE.md) · [MODEL-GUIDELINES](docs/MODEL-GUIDELINES.md) · [BYOK vs hop](docs/BYOK-DECISION.md) · [FAILURE-MODES](docs/FAILURE-MODES.md) · [CLOUD-HOST](docs/CLOUD-HOST.md) · [ROADMAP](docs/ROADMAP.md)
 
 ---
 
