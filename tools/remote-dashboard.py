@@ -288,12 +288,17 @@ PAGE_HTML = r"""<!doctype html>
 
       <div class="form-group">
         <label>上游 API 根地址 (Upstream Base URL, 无需加 /v1)</label>
-        <input type="text" id="upstreamUrl" placeholder="例如: https://api.deepseek.com 或 http://127.0.0.1:8642">
+        <input type="text" id="upstreamUrl" placeholder="例如: https://api.deepseek.com 或 https://api.deepseek.com">
       </div>
       <div class="grid" style="margin-bottom: 0;">
         <div class="form-group">
-          <label>模型名称 (Model Slug)</label>
-          <input type="text" id="modelSlug" placeholder="例如: deepseek-chat 或 gpt-4o">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label style="margin-bottom:0;">模型名称 (Model Slug)</label>
+            <a href="javascript:void(0)" onclick="fetchUpstreamModels()" style="font-size:12px; color:var(--accent); text-decoration:none;">📋 获取上游可用模型</a>
+          </div>
+          <input type="text" id="modelSlug" list="modelList" placeholder="例如: claude-sonnet-4-6 或 deepseek-chat" style="margin-top:6px;">
+          <datalist id="modelList"></datalist>
+          <div id="modelsBadges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; max-height:80px; overflow-y:auto;"></div>
         </div>
         <div class="form-group">
           <label>API Key / Token (留空则保留当前已配置的 Key)</label>
@@ -315,6 +320,7 @@ PAGE_HTML = r"""<!doctype html>
 
   <script>
     const PRESETS = {
+      'cpas': { url: 'https://api.deepseek.com', model: 'claude-sonnet-4-6' },
       'deepseek': { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
       'deepseek-r1': { url: 'https://api.deepseek.com', model: 'deepseek-reasoner' },
       'glm': { url: 'https://open.bigmodel.cn/api/paas', model: 'glm-5.3-flash' },
@@ -328,6 +334,52 @@ PAGE_HTML = r"""<!doctype html>
       if (p) {
         document.getElementById('upstreamUrl').value = p.url;
         document.getElementById('modelSlug').value = p.model;
+      }
+    }
+
+    function selectModel(name) {
+      document.getElementById('modelSlug').value = name;
+    }
+
+    async function fetchUpstreamModels() {
+      const upstream = document.getElementById('upstreamUrl').value.trim();
+      const key = document.getElementById('apiKey').value.trim();
+      if (!upstream) {
+        alert('请先输入上游 API 根地址');
+        return;
+      }
+      showMsg('正在获取上游模型列表...', true);
+      try {
+        const res = await fetch('/api/models', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ upstream, apiKey: key })
+        });
+        const d = await res.json();
+        if (d.ok && Array.isArray(d.models) && d.models.length > 0) {
+          const list = document.getElementById('modelList');
+          list.innerHTML = '';
+          const badges = document.getElementById('modelsBadges');
+          badges.innerHTML = '';
+          d.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            list.appendChild(opt);
+
+            const badge = document.createElement('span');
+            badge.className = 'pill';
+            badge.style.fontSize = '11px';
+            badge.style.padding = '2px 8px';
+            badge.textContent = m;
+            badge.onclick = () => selectModel(m);
+            badges.appendChild(badge);
+          });
+          showMsg(`✅ 成功获取 ${d.models.length} 个可用模型 (点击标签可快速选择)`, true);
+        } else {
+          showMsg('❌ 获取失败: ' + (d.error || '未返回可用模型'), false);
+        }
+      } catch (e) {
+        showMsg('❌ 请求异常: ' + e.message, false);
       }
     }
 
@@ -546,6 +598,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             req_data = {}
 
+        if self.path == "/api/models":
+            upstream = req_data.get("upstream", "").rstrip("/")
+            api_key = req_data.get("apiKey", "") or os.environ.get("API_SERVER_KEY", "")
+            if not upstream:
+                self._json(400, {"ok": False, "error": "upstream required"})
+                return
+
+            models_url = (upstream + "/models") if upstream.endswith("/v1") else (upstream + "/v1/models")
+            headers = {"Accept": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            try:
+                req = urllib.request.Request(models_url, headers=headers, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    models = []
+                    if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+                        models = [m["id"] for m in data["data"] if isinstance(m, dict) and "id" in m]
+                    elif isinstance(data, list):
+                        models = [m.get("id", m) if isinstance(m, dict) else str(m) for m in data]
+                    self._json(200, {"ok": True, "models": models})
+            except urllib.error.HTTPError as e:
+                err_text = e.read(500).decode("utf-8", "replace")
+                self._json(200, {"ok": False, "error": f"HTTP {e.code}: {err_text[:120]}"})
+            except Exception as e:
+                self._json(200, {"ok": False, "error": str(e)})
+            return
+
         if self.path == "/api/test":
             upstream = req_data.get("upstream", "").rstrip("/")
             model = req_data.get("model", "")
@@ -588,6 +669,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if api_key:
                 os.environ["API_SERVER_KEY"] = api_key
 
+            # Auto-wrap if host-main.cjs not yet wrapped
+            try:
+                if DEFAULT_HOST.is_file():
+                    content = DEFAULT_HOST.read_text(encoding="utf-8", errors="replace")
+                    if "createProtoSession" in content and "opengrok-runtime" not in content:
+                        subprocess.run([sys.executable, str(HERE / "install-stock-box.py"), "--skip-hop"], capture_output=True)
+            except Exception:
+                pass
+
             # Write model-bindings.json
             data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -610,6 +700,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             # Launch / restart hop-server if on box
             try:
+                subprocess.run(["pkill", "-f", "hop-server.py"], capture_output=True)
                 env = os.environ.copy()
                 env["HERMES_HOP_UPSTREAM"] = upstream
                 env["HERMES_HOP_PORT"] = "18790"
