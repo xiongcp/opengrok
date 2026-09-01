@@ -124,6 +124,33 @@ def read_last_lines(path: Path, max_lines: int = 80) -> str:
         return f"Error reading log: {e}"
 
 
+def get_hop_server_status() -> dict:
+    """Check hop-server process status."""
+    try:
+        r = subprocess.run(["pgrep", "-f", "hop-server.py"], capture_output=True, text=True)
+        pids = [int(p) for p in r.stdout.strip().split() if p.isdigit()]
+        return {"running": bool(pids), "pids": pids}
+    except Exception as e:
+        return {"running": False, "error": str(e), "pids": []}
+
+
+def get_api_key_info(data_dir: Path) -> dict:
+    key = os.environ.get("API_SERVER_KEY", "").strip()
+    key_file = data_dir / ".api_key"
+    if not key and key_file.is_file():
+        try:
+            key = key_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    if not key:
+        return {"configured": False, "preview": ""}
+    if len(key) <= 8:
+        preview = key[:2] + "****"
+    else:
+        preview = key[:4] + "****" + key[-4:]
+    return {"configured": True, "preview": preview}
+
+
 PAGE_HTML = r"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -275,22 +302,34 @@ PAGE_HTML = r"""<!doctype html>
     <div class="grid">
       <!-- 状态卡片 -->
       <div class="card">
-        <h2>沙箱环境状态 <span class="pill" onclick="refreshStatus()">刷新 ↻</span></h2>
+        <h2>沙箱环境与模型状态 <span class="pill" onclick="refreshStatus(true)">刷新同步 ↻</span></h2>
         <div class="status-row">
           <span class="status-label">Tailscale IP</span>
           <span id="tsIp" class="status-val">-</span>
         </div>
         <div class="status-row">
-          <span class="status-label">Grok sand-host 进程</span>
+          <span class="status-label">Grok sand-host</span>
           <span id="sandHostPid" class="status-val">-</span>
         </div>
         <div class="status-row">
-          <span class="status-label">当前活跃模型</span>
-          <span id="curModel" class="status-val">-</span>
+          <span class="status-label">Hop 中继代理</span>
+          <span id="hopServerStatus" class="status-val">-</span>
         </div>
         <div class="status-row">
-          <span class="status-label">Hop 代理地址</span>
-          <span id="curHop" class="status-val">-</span>
+          <span class="status-label">当前活跃模型</span>
+          <span id="curModel" class="status-val" style="color:var(--accent);">-</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">当前上游根地址</span>
+          <span id="curUpstream" class="status-val">-</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">思考与极速模式</span>
+          <span id="curEffortInfo" class="status-val">-</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">API Key 凭据状态</span>
+          <span id="curKeyStatus" class="status-val">-</span>
         </div>
         <div class="status-row">
           <span class="status-label">原生注入状态</span>
@@ -302,7 +341,7 @@ PAGE_HTML = r"""<!doctype html>
       <div class="card">
         <h2>快速运维控制</h2>
         <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
-          Grok Bot 官方更新后，或修改配置后执行热加载：
+          修改配置后可一键热生效，或在 Grok Bot 官方更新后重新注入：
         </p>
         <div class="btn-group">
           <button onclick="actionRestartHost()">🔄 重启 sand-host</button>
@@ -318,6 +357,7 @@ PAGE_HTML = r"""<!doctype html>
       <h2>配置并切换模型</h2>
       <div class="quick-picks">
         <span style="font-size:12px; color:var(--text-muted); line-height:22px;">快捷预设:</span>
+        <span class="pill" onclick="setPreset('cpas')">CPAS (Claude 3.7)</span>
         <span class="pill" onclick="setPreset('deepseek')">DeepSeek V3</span>
         <span class="pill" onclick="setPreset('deepseek-r1')">DeepSeek R1</span>
         <span class="pill" onclick="setPreset('glm')">智谱 GLM-5.3</span>
@@ -341,8 +381,11 @@ PAGE_HTML = r"""<!doctype html>
           <div id="modelsBadges" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; max-height:80px; overflow-y:auto;"></div>
         </div>
         <div class="form-group">
-          <label>API Key / Token (留空则保留当前已配置的 Key)</label>
-          <input type="password" id="apiKey" placeholder="sk-...">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label style="margin-bottom:0;">API Key / Token</label>
+            <span id="keyHint" style="font-size:12px; color:var(--text-muted);">检测中...</span>
+          </div>
+          <input type="password" id="apiKey" placeholder="留空则保留当前已配置的 Key" style="margin-top:6px;">
         </div>
       </div>
       <div class="grid" style="margin-bottom: 14px;">
@@ -376,6 +419,8 @@ PAGE_HTML = r"""<!doctype html>
   </div>
 
   <script>
+    let isInitialLoad = true;
+
     const PRESETS = {
       'cpas': { url: 'https://api.deepseek.com', model: 'claude-sonnet-4-6' },
       'deepseek': { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
@@ -448,7 +493,7 @@ PAGE_HTML = r"""<!doctype html>
       setTimeout(() => { box.style.display = 'none'; }, 6000);
     }
 
-    async function refreshStatus() {
+    async function refreshStatus(forceSyncForm = false) {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
@@ -466,28 +511,60 @@ PAGE_HTML = r"""<!doctype html>
           document.getElementById('sandHostPid').textContent = '未运行';
         }
 
+        const hopStatus = document.getElementById('hopServerStatus');
+        if (data.hop_server && data.hop_server.running) {
+          hopStatus.innerHTML = '<span style="color:var(--success)">运行中 (PID ' + data.hop_server.pids.join(', ') + ')</span>';
+        } else {
+          hopStatus.innerHTML = '<span style="color:var(--danger)">未启动 ⚠️</span>';
+        }
+
         const agent = (data.bindings && data.bindings.agents && (data.bindings.agents['*'] || Object.values(data.bindings.agents)[0])) || {};
         document.getElementById('curModel').textContent = agent.modelId || agent.name || '未配置';
-        document.getElementById('curHop').textContent = agent.hopBaseUrl || '未配置';
+        document.getElementById('curUpstream').textContent = agent.upstream || '未配置';
         document.getElementById('curWrapStatus').textContent = data.wrapped ? '已注入 (createProtoSession)' : '未检测到注入';
 
-        if (!document.getElementById('upstreamUrl').value && agent.upstream) {
-          document.getElementById('upstreamUrl').value = agent.upstream;
+        // 思考级别回显
+        let effortVal = 'high';
+        let isFast = false;
+        if (Array.isArray(agent.parameters)) {
+          const ep = agent.parameters.find(p => p && p.id === 'effort');
+          if (ep && ep.value) effortVal = ep.value;
+          const fp = agent.parameters.find(p => p && p.id === 'fast');
+          if (fp && (fp.value === 'true' || fp.value === true)) isFast = true;
+          const tp = agent.parameters.find(p => p && p.id === 'thinking');
+          if (tp && (tp.value === 'false' || tp.value === false)) isFast = true;
         }
-        if (!document.getElementById('modelSlug').value && agent.modelId) {
-          document.getElementById('modelSlug').value = agent.modelId;
+        document.getElementById('curEffortInfo').textContent = effortVal + (isFast ? ' (极速通道)' : ' (深度推理)');
+
+        // Key 状态回显
+        const keyStatus = document.getElementById('curKeyStatus');
+        const keyHint = document.getElementById('keyHint');
+        if (data.api_key_info && data.api_key_info.configured) {
+          keyStatus.innerHTML = '<span style="color:var(--success)">已配置 (' + data.api_key_info.preview + ')</span>';
+          keyHint.innerHTML = '<span style="color:var(--success)">✅ 已保存 Key (' + data.api_key_info.preview + ')</span>';
+        } else {
+          keyStatus.innerHTML = '<span style="color:var(--danger)">未配置 (缺少 Key ⚠️)</span>';
+          keyHint.innerHTML = '<span style="color:var(--danger)">⚠️ 尚未配置 Key</span>';
         }
 
-        if (Array.isArray(agent.parameters)) {
-          const effortParam = agent.parameters.find(p => p && p.id === 'effort');
-          if (effortParam && effortParam.value) {
-            document.getElementById('effortSelect').value = effortParam.value;
-          }
-          const fastParam = agent.parameters.find(p => p && p.id === 'fast');
-          if (fastParam) {
-            document.getElementById('fastToggle').checked = fastParam.value === 'true';
-          }
+        // 表单字段回显与同步
+        const upstreamInput = document.getElementById('upstreamUrl');
+        const modelInput = document.getElementById('modelSlug');
+        const effortSelect = document.getElementById('effortSelect');
+        const fastToggle = document.getElementById('fastToggle');
+
+        const isUserEditing = document.activeElement === upstreamInput ||
+                             document.activeElement === modelInput ||
+                             document.activeElement === effortSelect;
+
+        if (forceSyncForm || isInitialLoad || (!isUserEditing && (!upstreamInput.value || !modelInput.value))) {
+          if (agent.upstream) upstreamInput.value = agent.upstream;
+          if (agent.modelId || agent.name) modelInput.value = agent.modelId || agent.name;
+          effortSelect.value = effortVal;
+          fastToggle.checked = isFast;
+          if (forceSyncForm && !isInitialLoad) showMsg('✅ 已同步配置文件最新状态', true);
         }
+        isInitialLoad = false;
 
         if (data.session_log) {
           const logBox = document.getElementById('logBox');
@@ -545,7 +622,8 @@ PAGE_HTML = r"""<!doctype html>
         const d = await res.json();
         if (d.ok) {
           showMsg('✅ 配置已保存并热生效！sand-host 已重载。', true);
-          refreshStatus();
+          document.getElementById('apiKey').value = '';
+          refreshStatus(true);
         } else {
           showMsg('❌ 保存失败: ' + d.error, false);
         }
@@ -560,7 +638,7 @@ PAGE_HTML = r"""<!doctype html>
         const res = await fetch('/api/restart-host', { method: 'POST' });
         const d = await res.json();
         showMsg(d.ok ? '✅ sand-host 重启成功' : '❌ 重启失败: ' + d.error, d.ok);
-        setTimeout(refreshStatus, 1500);
+        setTimeout(() => refreshStatus(true), 1500);
       } catch (e) {
         showMsg('❌ 请求异常: ' + e.message, false);
       }
@@ -572,7 +650,7 @@ PAGE_HTML = r"""<!doctype html>
         const res = await fetch('/api/install', { method: 'POST' });
         const d = await res.json();
         showMsg(d.ok ? '✅ Host 注入与包装已就绪' : '❌ 注入失败: ' + d.error, d.ok);
-        refreshStatus();
+        refreshStatus(true);
       } catch (e) {
         showMsg('❌ 请求异常: ' + e.message, false);
       }
@@ -589,8 +667,8 @@ PAGE_HTML = r"""<!doctype html>
       }
     }
 
-    refreshStatus();
-    setInterval(refreshStatus, 5000);
+    refreshStatus(true);
+    setInterval(() => refreshStatus(false), 5000);
   </script>
 </body>
 </html>
@@ -628,7 +706,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             ts_ip = get_tailscale_ip()
             sand_status = get_sand_host_status()
-            bindings = get_bindings(DEFAULT_DATA)
+            hop_status = get_hop_server_status()
+            data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
+            bindings = get_bindings(data_dir)
+            api_key_info = get_api_key_info(data_dir)
             session_log = read_last_lines(SESSION_LOG, 40)
             wrapped = False
             if DEFAULT_HOST.is_file():
@@ -640,6 +721,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(200, {
                 "tailscale_ip": ts_ip,
                 "sand_host": sand_status,
+                "hop_server": hop_status,
+                "api_key_info": api_key_info,
                 "bindings": bindings,
                 "wrapped": wrapped,
                 "session_log": session_log,
