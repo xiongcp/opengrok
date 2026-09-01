@@ -184,6 +184,49 @@ def get_api_key_info(data_dir: Path) -> dict:
     return {"configured": True, "preview": preview}
 
 
+def atomic_write_json(path: Path, doc: dict) -> None:
+    """The runtime re-reads bindings on EVERY turn; a torn write would
+    degrade routing to the native fallback. Write-then-replace instead."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def list_sandbox_agents() -> list:
+    """Named agents from the sandbox store: sand-data/agents/<uuid>/profile.json.
+    This is the authoritative source for the binding dropdown — the same UUIDs
+    the host passes into session creation."""
+    agents_dir = DEFAULT_DATA / "agents"
+    out = []
+    if not agents_dir.is_dir():
+        return out
+    active_id = ""
+    try:
+        active_file = agents_dir / "active-agent.json"
+        if active_file.is_file():
+            active_id = json.loads(active_file.read_text(encoding="utf-8")).get("activeAgentId", "")
+    except Exception:
+        pass
+    uuid_re = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+    for d in sorted(agents_dir.iterdir()):
+        if not d.is_dir() or not uuid_re.fullmatch(d.name):
+            continue
+        prof = {}
+        try:
+            pj = d / "profile.json"
+            if pj.is_file():
+                prof = json.loads(pj.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        out.append({
+            "id": d.name,
+            "name": prof.get("name") or "",
+            "description": (prof.get("description") or "")[:120],
+            "active": d.name.lower() == active_id.lower(),
+        })
+    return out
+
+
 # --- host-wrap watchdog ------------------------------------------------------
 # The sandbox supervisor may regenerate host-main.cjs from a pristine copy when
 # it restarts the host, silently dropping the opengrok injection. The watchdog
@@ -571,7 +614,7 @@ PAGE_HTML = r"""<!doctype html>
   <section id="tab-agents" class="panel">
     <div class="card">
       <h2>Agent 路由规则 <button class="btn sm" onclick="openAgentModal(null)">＋ 新增绑定</button></h2>
-      <div class="hint">Grok Bot 每个 Agent / 对话携带唯一 UUID（会话日志中可观察）。未命中的 Agent 回退到全局默认 <code>*</code>。</div>
+      <div class="hint">每个 Agent 可把会话路由到 <b>自定义渠道</b>（hop 中转 → 您的上游）或 <b>原生 Grok</b>（沙箱内置模型）。未绑定的 Agent 回退到全局默认 <code>*</code>；连 <code>*</code> 都没有时自动使用原生模型，不会断聊。</div>
       <table>
         <thead><tr><th>Agent</th><th>别名</th><th>模型</th><th>推理</th><th style="width:130px">操作</th></tr></thead>
         <tbody id="agentsBody"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody>
@@ -669,21 +712,31 @@ PAGE_HTML = r"""<!doctype html>
       <input id="inAgentFixed" class="mono" readonly style="opacity:.75">
     </div>
     <div class="fg">
+      <label>路由目标</label>
+      <select id="selAgentTarget" onchange="onAgentTarget()">
+        <option value="hop">自定义渠道（hop 中转 → 您的上游）</option>
+        <option value="native">原生 Grok（沙箱内置模型，不经过 hop）</option>
+      </select>
+      <div class="help" id="agentTargetHelp">走您的自有渠道，可使用下方模型与推理深度配置。</div>
+    </div>
+    <div class="fg">
       <label>别名</label>
       <input id="inAgentName" placeholder="例如：架构评审专家">
     </div>
-    <div class="fg">
-      <label>绑定模型</label>
-      <input id="inAgentModel" list="modelList" placeholder="grok-4.6 / claude-3-7-sonnet">
-    </div>
-    <div class="fg">
-      <label>推理深度</label>
-      <select id="selAgentEffort">
-        <option value="high">high · 深度思考</option>
-        <option value="xhigh">xhigh / max</option>
-        <option value="medium">medium</option>
-        <option value="low">low</option>
-      </select>
+    <div id="agentHopFields">
+      <div class="fg">
+        <label>绑定模型</label>
+        <input id="inAgentModel" list="modelList" placeholder="grok-4.6 / claude-3-7-sonnet">
+      </div>
+      <div class="fg">
+        <label>推理深度</label>
+        <select id="selAgentEffort">
+          <option value="high">high · 深度思考</option>
+          <option value="xhigh">xhigh / max</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+        </select>
+      </div>
     </div>
     <div class="actions">
       <button class="btn ghost" onclick="closeAgentModal()">取消</button>
@@ -696,6 +749,7 @@ PAGE_HTML = r"""<!doctype html>
 const $ = id => document.getElementById(id);
 let globalBindings = {agents:{}};
 let recentAgentIds = [];
+let sandboxAgents = [];
 let rawLogText = '';
 let logLevel = 'all';
 let editingAgentKey = null;
@@ -869,19 +923,33 @@ function renderAgents(){
   keys.sort((a,b) => (a === '*' ? -1 : b === '*' ? 1 : a.localeCompare(b))).forEach(k => {
     const a = agents[k] || {};
     const tr = document.createElement('tr');
+    const isNative = a.provider === 'native';
     const eff = paramOf(a, 'effort') || 'default';
     const thinking = paramOf(a, 'thinking');
     const star = k === '*';
+    const known = sandboxAgents.find(s => s.id.toLowerCase() === k.toLowerCase());
+    const displayName = a.name || (known && known.name) || '-';
     tr.innerHTML =
       '<td data-th="Agent"><code>' + (star ? '★ 全局默认 (*)' : esc(shortId(k))) + '</code>' + (star ? '' : '<div style="font-size:10px;color:var(--muted);word-break:break-all">' + esc(k) + '</div>') + '</td>' +
-      '<td data-th="别名">' + esc(a.name || '-') + '</td>' +
-      '<td data-th="模型"><b style="color:var(--info)">' + esc(a.modelId || '-') + '</b></td>' +
-      '<td data-th="推理"><span class="tag' + (eff === 'high' || eff === 'xhigh' ? ' hi' : '') + '">effort=' + esc(eff) + '</span>' +
-        (thinking ? '<span class="tag">thinking=' + esc(String(thinking)) + '</span>' : '') + '</td>' +
+      '<td data-th="别名">' + esc(displayName) + (known && known.active ? ' <span class="tag star">当前</span>' : '') + '</td>' +
+      (isNative
+        ? '<td data-th="模型"><b style="color:var(--ok)">🌀 原生 Grok</b><div style="font-size:11px;color:var(--muted)">跟随客户端选择，含 grok-4.5/4.6 系列</div></td>' +
+          '<td data-th="推理"><span style="font-size:12px;color:var(--muted)">—</span></td>'
+        : '<td data-th="模型"><b style="color:var(--info)">' + esc(a.modelId || '-') + '</b></td>' +
+          '<td data-th="推理"><span class="tag' + (eff === 'high' || eff === 'xhigh' ? ' hi' : '') + '">effort=' + esc(eff) + '</span>' +
+            (thinking ? '<span class="tag">thinking=' + esc(String(thinking)) + '</span>' : '') + '</td>') +
       '<td data-th="操作"><button class="btn ghost sm" onclick="openAgentModal(\'' + esc(k) + '\')">编辑</button> ' +
         (star ? '' : '<button class="btn danger sm" onclick="deleteAgent(\'' + esc(k) + '\')">删除</button>') + '</td>';
     tbody.appendChild(tr);
   });
+}
+
+function onAgentTarget(){
+  const native = $('selAgentTarget').value === 'native';
+  $('agentHopFields').style.display = native ? 'none' : 'block';
+  $('agentTargetHelp').textContent = native
+    ? '会话直接使用沙箱内置 Grok 模型（grok-4.5/4.6 系列），不消耗您的渠道额度。'
+    : '走您的自有渠道，可使用下方模型与推理深度配置。';
 }
 
 function openAgentModal(editKey){
@@ -894,6 +962,8 @@ function openAgentModal(editKey){
     $('agentFixedRow').style.display = 'block';
     $('inAgentFixed').value = editKey === '*' ? '★ 全局默认 (*)' : editKey;
     const a = (globalBindings.agents || {})[editKey] || {};
+    const isNative = a.provider === 'native';
+    $('selAgentTarget').value = isNative ? 'native' : 'hop';
     $('inAgentName').value = a.name || '';
     $('inAgentModel').value = a.modelId || '';
     $('selAgentEffort').value = paramOf(a, 'effort') || 'high';
@@ -901,11 +971,13 @@ function openAgentModal(editKey){
     $('modalTitle').textContent = '新增 Agent 绑定';
     $('agentSelectRow').style.display = 'block';
     $('agentFixedRow').style.display = 'none';
+    $('selAgentTarget').value = 'hop';
     buildAgentSelect();
     $('inAgentName').value = '';
     $('inAgentModel').value = '';
     $('selAgentEffort').value = 'high';
   }
+  onAgentTarget();
   $('agentModal').classList.add('open');
 }
 
@@ -913,14 +985,22 @@ function buildAgentSelect(){
   const sel = $('selAgent');
   const agents = globalBindings.agents || {};
   sel.innerHTML = '';
-  const known = new Set(Object.keys(agents));
+  const known = new Set(Object.keys(agents).map(k => k.toLowerCase()));
+  const named = new Set(sandboxAgents.map(s => s.id.toLowerCase()));
+
   Object.keys(agents).forEach(k => {
     const o = document.createElement('option');
     o.value = k;
-    o.textContent = k === '*' ? '★ 全局默认 (*)' : (agents[k].name ? agents[k].name + ' · ' : '') + shortId(k);
+    o.textContent = '⚙️ ' + (k === '*' ? '★ 全局默认 (*)' : (agents[k].name ? agents[k].name + ' · ' : '') + shortId(k)) + '（已配置）';
     sel.appendChild(o);
   });
-  recentAgentIds.filter(u => !known.has(u)).forEach(u => {
+  sandboxAgents.filter(s => !known.has(s.id.toLowerCase())).forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = '🤖 ' + (s.name || shortId(s.id)) + (s.active ? '（当前活跃）' : '') + (s.name ? ' · ' + shortId(s.id) : '');
+    sel.appendChild(o);
+  });
+  recentAgentIds.filter(u => !known.has(u) && !named.has(u)).forEach(u => {
     const o = document.createElement('option');
     o.value = u;
     o.textContent = '🛰 日志观察到 · ' + shortId(u);
@@ -946,21 +1026,32 @@ async function saveAgentFromModal(btn){
   if (editingAgentKey) key = editingAgentKey;
   else key = $('selAgent').value === '__custom' ? $('inAgentCustom').value.trim() : $('selAgent').value;
   const name = $('inAgentName').value.trim();
+  const target = $('selAgentTarget').value;
   const model = $('inAgentModel').value.trim();
   const effort = $('selAgentEffort').value;
-  if (!key || !model){ toast('err', '请选择 Agent 并填写模型名称'); return; }
+  if (!key){ toast('err', '请选择 Agent'); return; }
+  if (target !== 'native' && !model){ toast('err', '请填写模型名称'); return; }
   if (!globalBindings.agents) globalBindings.agents = {};
   const prev = globalBindings.agents[key] || {};
-  const star = globalBindings.agents['*'] || {};
-  const upstream = prev.upstream || star.upstream || $('inUpstream').value.trim() || 'https://api.x.ai/v1';
-  globalBindings.agents[key] = Object.assign({}, prev, {
-    name: name || model,
-    modelId: model,
-    provider: prev.provider || 'custom',
-    hopBaseUrl: prev.hopBaseUrl || 'http://127.0.0.1:18790/v1',
-    upstream: upstream,
-    parameters: [{id:'effort', value:effort}, {id:'thinking', value:'true'}],
-  });
+  if (target === 'native'){
+    // Native lane: runtime returns the stock provider for this agent — the
+    // turn uses the sandbox's built-in Grok models, no hop involved.
+    globalBindings.agents[key] = {
+      name: name || (prev.name || '原生 Grok'),
+      provider: 'native',
+    };
+  } else {
+    const star = globalBindings.agents['*'] || {};
+    const upstream = prev.upstream || star.upstream || $('inUpstream').value.trim() || 'https://api.x.ai/v1';
+    globalBindings.agents[key] = Object.assign({}, prev, {
+      name: name || model,
+      modelId: model,
+      provider: prev.provider && prev.provider !== 'native' ? prev.provider : 'custom',
+      hopBaseUrl: prev.hopBaseUrl || 'http://127.0.0.1:18790/v1',
+      upstream: upstream,
+      parameters: [{id:'effort', value:effort}, {id:'thinking', value:'true'}],
+    });
+  }
   closeAgentModal();
   await syncFullBindings(btn);
 }
@@ -1159,7 +1250,11 @@ async function refreshStatus(syncForm){
 async function fetchRecentAgents(){
   try{
     const d = await api('/api/agents');
-    if (d.ok) recentAgentIds = d.recent_ids || [];
+    if (d.ok){
+      recentAgentIds = d.recent_ids || [];
+      sandboxAgents = d.sandbox_agents || [];
+      renderAgents();
+    }
   }catch(e){}
 }
 
@@ -1219,11 +1314,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/agents":
-            # Dropdown data for the binding modal: configured agents + agent
-            # UUIDs recently observed in the routing log (one-click binding).
+            # Dropdown data for the binding modal: configured bindings, named
+            # agents from the sandbox store, plus UUIDs recently observed in
+            # the routing log (one-click binding).
             data_dir = DEFAULT_DATA if DEFAULT_DATA.is_dir() else REPO_ROOT
             agents = (get_bindings(data_dir).get("agents") or {})
-            recent, seen = [], set()
+            named = list_sandbox_agents()
+            known = {a["id"].lower() for a in named} | {k.lower() for k in agents}
+            recent, seen = [], set(known)
             if SESSION_LOG.is_file():
                 try:
                     txt = SESSION_LOG.read_text(encoding="utf-8", errors="replace")
@@ -1236,7 +1334,12 @@ class Handler(BaseHTTPRequestHandler):
                             recent.append(u)
                 except Exception:
                     pass
-            self._json(200, {"ok": True, "agents": agents, "recent_ids": recent[-20:]})
+            self._json(200, {
+                "ok": True,
+                "agents": agents,
+                "sandbox_agents": named,
+                "recent_ids": recent[-20:],
+            })
             return
 
         if self.path == "/api/doctor":
@@ -1352,7 +1455,7 @@ class Handler(BaseHTTPRequestHandler):
             data_dir.mkdir(parents=True, exist_ok=True)
             bindings_path = data_dir / "model-bindings.json"
             try:
-                bindings_path.write_text(json.dumps(new_bindings, indent=2) + "\n", encoding="utf-8")
+                atomic_write_json(bindings_path, new_bindings)
                 # restart sand-host
                 subprocess.run(["pkill", "-f", "host-main.cjs"], capture_output=True)
                 self._json(200, {"ok": True})
@@ -1430,7 +1533,7 @@ class Handler(BaseHTTPRequestHandler):
                 "_comment": "configured via opengrok remote-dashboard",
                 "agents": existing_agents
             }
-            bindings_path.write_text(json.dumps(bdoc, indent=2) + "\n", encoding="utf-8")
+            atomic_write_json(bindings_path, bdoc)
 
             # Launch / restart hop-server if on box
             try:

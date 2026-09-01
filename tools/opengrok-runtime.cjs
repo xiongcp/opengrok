@@ -79,7 +79,8 @@ function resolveBinding(args) {
   }
   if (agents["*"]) {
     // Surface unbound agent ids so the dashboard can offer one-click binding.
-    if (ids.length) log("route no agent match for [" + ids.join(", ") + "]; using '*'");
+    if (ids.length)
+      log("route no agent match for [" + ids.join(", ") + "]; using '*'");
     return agents["*"];
   }
   return null;
@@ -95,7 +96,7 @@ function requestedModelId(args) {
 
 function cloneParameters(params) {
   if (!Array.isArray(params)) return [];
-  return params.map(function (p) {
+  return params.map((p) => {
     if (!p || typeof p !== "object") return p;
     return { id: p.id, value: p.value };
   });
@@ -170,7 +171,7 @@ function dumpProto(stock) {
 }
 
 function swallow(p) {
-  Promise.resolve(p).catch(function () {});
+  Promise.resolve(p).catch(() => {});
   return p;
 }
 
@@ -275,7 +276,7 @@ function toolMessageToOpenAI(m) {
       if (p.type === "tool-result") {
         if (!toolCallId && p.toolCallId) toolCallId = p.toolCallId;
         var r = p.result;
-        text = typeof r === "string" ? r : JSON.stringify(r != null ? r : "");
+        text = typeof r === "string" ? r : JSON.stringify(r == null ? "" : r);
       } else if (p.type === "text") {
         text += p.text || "";
       }
@@ -476,31 +477,31 @@ function hopFullStream(
   var settled = { u: false, e: false, m: false, i: false, r: false };
   var resU, rejU, resE, rejE, resM, rejM, resI, rejI, resR, rejR;
   var usage = swallow(
-    new Promise(function (res, rej) {
+    new Promise((res, rej) => {
       resU = res;
       rejU = rej;
     }),
   );
   var extendedUsage = swallow(
-    new Promise(function (res, rej) {
+    new Promise((res, rej) => {
       resE = res;
       rejE = rej;
     }),
   );
   var providerMetadata = swallow(
-    new Promise(function (res, rej) {
+    new Promise((res, rej) => {
       resM = res;
       rejM = rej;
     }),
   );
   var inv = swallow(
-    new Promise(function (res, rej) {
+    new Promise((res, rej) => {
       resI = res;
       rejI = rej;
     }),
   );
   var response = swallow(
-    new Promise(function (res, rej) {
+    new Promise((res, rej) => {
       resR = res;
       rejR = rej;
     }),
@@ -559,7 +560,7 @@ function hopFullStream(
 
   var abortListener = null;
   if (ctx && ctx.signal && !ctx.signal.aborted) {
-    abortListener = function () {
+    abortListener = () => {
       hopSess.abort();
     };
     ctx.signal.addEventListener("abort", abortListener);
@@ -581,9 +582,7 @@ function hopFullStream(
       };
       hopSess.parameters = resolveParametersForTurn(binding, turn.messages);
       var effLog = (hopSess.parameters || [])
-        .map(function (p) {
-          return p.id + "=" + p.value;
-        })
+        .map((p) => p.id + "=" + p.value)
         .join(" ");
       log(
         "stream messages=" +
@@ -614,12 +613,12 @@ function hopFullStream(
           while (waiters.length) waiters.shift()();
         }
         var streamPromise = hopSess.runTurnStream(turn, pushEv).then(
-          function (o) {
+          (o) => {
             out = o;
             streamDone = true;
             while (waiters.length) waiters.shift()();
           },
-          function (e) {
+          (e) => {
             streamErr = e;
             streamDone = true;
             while (waiters.length) waiters.shift()();
@@ -633,7 +632,7 @@ function hopFullStream(
             else if (ev.type === "text")
               yield { type: "text-delta", textDelta: ev.textDelta };
           } else if (!streamDone) {
-            await new Promise(function (res) {
+            await new Promise((res) => {
               waiters.push(res);
             });
           }
@@ -773,10 +772,10 @@ function hopFullStream(
 
 function wrapExecutor(exec, hopSess, binding) {
   return new Proxy(exec, {
-    get: function (target, prop) {
+    get: (target, prop) => {
       if (prop === "stream") {
-        return function (ctx, invocationId, tools, options2) {
-          return hopFullStream(
+        return (ctx, invocationId, tools, options2) =>
+          hopFullStream(
             target,
             hopSess,
             binding,
@@ -785,7 +784,6 @@ function wrapExecutor(exec, hopSess, binding) {
             tools,
             options2,
           );
-        };
       }
       var val = target[prop];
       if (typeof val === "function") return val.bind(target);
@@ -796,14 +794,12 @@ function wrapExecutor(exec, hopSess, binding) {
 
 function wrapPromptSession(inner, hopSess, binding, middleware) {
   return {
-    getExecutor: function (state) {
+    getExecutor: (state) => {
       var raw = inner.getExecutor(state);
       var hopExec = wrapExecutor(raw, hopSess, binding);
       return middleware ? middleware(hopExec) : hopExec;
     },
-    getModelId: function () {
-      return binding.modelId;
-    },
+    getModelId: () => binding.modelId,
   };
 }
 
@@ -811,39 +807,27 @@ function wrapProvider(stockProvider, hopSess, binding) {
   return {
     opengrok: true,
     modelId: binding.modelId,
-    getSession: function (middleware) {
+    getSession: (middleware) => {
       var inner = stockProvider.getSession(undefined);
       return wrapPromptSession(inner, hopSess, binding, middleware);
     },
-    getProviderName: function () {
-      return typeof stockProvider.getProviderName === "function"
+    getProviderName: () =>
+      typeof stockProvider.getProviderName === "function"
         ? stockProvider.getProviderName()
-        : "proto";
-    },
-    getModelId: function () {
-      return binding.modelId;
-    },
-    getThinkingDetails: function () {
-      return typeof stockProvider.getThinkingDetails === "function"
+        : "proto",
+    getModelId: () => binding.modelId,
+    getThinkingDetails: () =>
+      typeof stockProvider.getThinkingDetails === "function"
         ? stockProvider.getThinkingDetails()
-        : undefined;
-    },
+        : undefined,
   };
 }
 
 function wrapBareHop(hopSess) {
-  hopSess.getSession = function () {
-    return hopSess;
-  };
-  hopSess.getProviderName = function () {
-    return "proto";
-  };
-  hopSess.getModelId = function () {
-    return hopSess.modelId;
-  };
-  hopSess.getThinkingDetails = function () {
-    return undefined;
-  };
+  hopSess.getSession = () => hopSess;
+  hopSess.getProviderName = () => "proto";
+  hopSess.getModelId = () => hopSess.modelId;
+  hopSess.getThinkingDetails = () => undefined;
   return hopSess;
 }
 
@@ -859,12 +843,17 @@ function wrapSession(stockFn, args) {
     return probed;
   }
   var binding = resolveBinding(arr);
+  // Native lane: an explicit {"provider":"native"} binding keeps the turn on
+  // the sandbox's built-in Grok models instead of the hop. No usable binding
+  // degrades to native as well — fail-safe beats fail-closed: a mangled
+  // bindings file must never kill chat.
+  if (binding && binding.provider === "native") {
+    log("route native passthrough (agent binding)");
+    return stockFn.apply(null, arr);
+  }
   if (!binding || !binding.hopBaseUrl || !binding.modelId) {
-    var err = new Error(
-      "opengrok: no model binding for this turn (set agents['*'] or a matching agent id in model-bindings.json)",
-    );
-    log(err.message);
-    throw err;
+    log("route no usable binding; native passthrough (stock provider)");
+    return stockFn.apply(null, arr);
   }
   var requested = requestedModelId(arr);
   log(

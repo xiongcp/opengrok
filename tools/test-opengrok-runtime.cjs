@@ -70,4 +70,43 @@ var analyzeParams = h.resolveParametersForTurn(effortBinding, [
 assert.equal(researchParams.filter(function (p) { return p.id === "effort"; })[0].value, "high");
 assert.equal(analyzeParams.filter(function (p) { return p.id === "effort"; })[0].value, "medium");
 
+// --- wrapSession routing: native lane + fail-safe passthrough ---
+// (bindings path is captured at require time, so re-require with env set)
+var path = require("path");
+var os = require("os");
+var fs2 = require("fs");
+
+function rerequire(bindingsPath) {
+  process.env.OPENGROK_BINDINGS = bindingsPath;
+  process.env.OPENGROK_LOG = path.join(os.tmpdir(), "opengrok-test-session.log");
+  delete require.cache[require.resolve("./opengrok-runtime.cjs")];
+  return require("./opengrok-runtime.cjs");
+}
+var stockSentinel = { kind: "stock", getSession: function () { return {}; } };
+var stockFn = function () { return stockSentinel; };
+var turnArgs = [{}, { modelId: "grok-4.6" }];
+
+// 1. No bindings file at all -> native passthrough (previously threw).
+var rtNone = rerequire(path.join(os.tmpdir(), "opengrok-test-missing.json"));
+assert.equal(rtNone.wrapSession(stockFn, turnArgs), stockSentinel,
+  "no bindings file must degrade to native, never kill chat");
+
+// 2. provider:"native" binding -> passthrough even though it has no hop fields.
+var tmpB = path.join(os.tmpdir(), "opengrok-test-bindings.json");
+fs2.writeFileSync(tmpB, JSON.stringify({ agents: { "*": { name: "native", provider: "native" } } }));
+var rtNative = rerequire(tmpB);
+assert.equal(rtNative.wrapSession(stockFn, turnArgs), stockSentinel,
+  "provider=native must return the stock provider untouched");
+
+// 3. A hop binding still routes through the hop wrapper.
+fs2.writeFileSync(tmpB, JSON.stringify({ agents: { "*": {
+  modelId: "glm-5.3-flash", provider: "custom", hopBaseUrl: "http://127.0.0.1:9/v1",
+} } }));
+var rtHop = rerequire(tmpB);
+var wrapped = rtHop.wrapSession(stockFn, turnArgs);
+assert.notEqual(wrapped, stockSentinel);
+assert.equal(wrapped.opengrok, true);
+assert.equal(wrapped.getModelId(), "glm-5.3-flash");
+fs2.unlinkSync(tmpB);
+
 console.log("opengrok-runtime: ok");
