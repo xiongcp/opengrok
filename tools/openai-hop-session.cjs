@@ -36,7 +36,8 @@ function loadMaps() {
 
 function applyMaps(body, ctx) {
   var maps = loadMaps();
-  if (!maps || typeof maps.applyProviderReasoningControls !== "function") return;
+  if (!maps || typeof maps.applyProviderReasoningControls !== "function")
+    return;
   var localQwen = false;
   if (!localQwen) {
     maps.applyProviderReasoningControls(body, ctx);
@@ -47,7 +48,7 @@ function mergeToolCallDelta(acc, tcArray) {
   if (!Array.isArray(tcArray)) return;
   for (var i = 0; i < tcArray.length; i++) {
     var tc = tcArray[i];
-    var idx = tc.index != null ? tc.index : i;
+    var idx = tc.index == null ? i : tc.index;
     if (!acc.tool_calls[idx]) {
       acc.tool_calls[idx] = {
         id: tc.id || "",
@@ -59,7 +60,8 @@ function mergeToolCallDelta(acc, tcArray) {
     if (tc.id) slot.id = tc.id;
     if (tc.function) {
       if (tc.function.name) slot.function.name = tc.function.name;
-      if (tc.function.arguments) slot.function.arguments += tc.function.arguments;
+      if (tc.function.arguments)
+        slot.function.arguments += tc.function.arguments;
     }
   }
 }
@@ -79,7 +81,7 @@ function buildTurnOut(acc) {
 }
 
 function postJson(urlStr, body, headers, timeoutMs, session) {
-  return new Promise(function (resolve, reject) {
+  return new Promise((resolve, reject) => {
     var u;
     try {
       u = new URL(urlStr);
@@ -88,35 +90,47 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
     }
     var lib = u.protocol === "https:" ? https : http;
     var payload = Buffer.from(JSON.stringify(body), "utf8");
-    var hdrs = Object.assign({
-      "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
-      "Accept": "application/json",
-      "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
-    }, headers || {});
-    var req = lib.request({
-      protocol: u.protocol,
-      hostname: u.hostname,
-      port: u.port || (u.protocol === "https:" ? 443 : 80),
-      path: u.pathname + u.search,
-      method: "POST",
-      headers: hdrs,
-    }, function (res) {
-      var chunks = [];
-      res.on("data", function (c) { chunks.push(c); });
-      res.on("end", function () {
-        var raw = Buffer.concat(chunks).toString("utf8");
-        var json = null;
-        try { json = JSON.parse(raw); } catch (_e) { json = null; }
-        resolve({ status: res.statusCode, raw: raw, json: json });
-      });
-    });
+    var hdrs = Object.assign(
+      {
+        "Content-Type": "application/json",
+        "Content-Length": String(payload.length),
+        Accept: "application/json",
+        "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
+      },
+      headers || {},
+    );
+    var req = lib.request(
+      {
+        protocol: u.protocol,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === "https:" ? 443 : 80),
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: hdrs,
+      },
+      (res) => {
+        var chunks = [];
+        res.on("data", (c) => {
+          chunks.push(c);
+        });
+        res.on("end", () => {
+          var raw = Buffer.concat(chunks).toString("utf8");
+          var json = null;
+          try {
+            json = JSON.parse(raw);
+          } catch (_e) {
+            json = null;
+          }
+          resolve({ status: res.statusCode, raw: raw, json: json });
+        });
+      },
+    );
     if (session) session._activeReq = req;
-    req.setTimeout(timeoutMs || 180000, function () {
+    req.setTimeout(timeoutMs || 180000, () => {
       req.destroy();
       reject(new Error("openai-hop-session: upstream timeout"));
     });
-    req.on("error", function (err) {
+    req.on("error", (err) => {
       if (session && session._activeReq === req) session._activeReq = null;
       if (err && (err.code === "ECONNRESET" || err.message === "aborted")) {
         reject(new Error("openai-hop-session: aborted"));
@@ -124,7 +138,7 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
       }
       reject(err);
     });
-    req.on("close", function () {
+    req.on("close", () => {
       if (session && session._activeReq === req) session._activeReq = null;
     });
     req.write(payload);
@@ -133,7 +147,7 @@ function postJson(urlStr, body, headers, timeoutMs, session) {
 }
 
 function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
-  return new Promise(function (resolve, reject) {
+  return new Promise((resolve, reject) => {
     var u;
     try {
       u = new URL(urlStr);
@@ -142,12 +156,15 @@ function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
     }
     var lib = u.protocol === "https:" ? https : http;
     var payload = Buffer.from(JSON.stringify(body), "utf8");
-    var hdrs = Object.assign({
-      "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
-      "Accept": "text/event-stream",
-      "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
-    }, headers || {});
+    var hdrs = Object.assign(
+      {
+        "Content-Type": "application/json",
+        "Content-Length": String(payload.length),
+        Accept: "text/event-stream",
+        "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)",
+      },
+      headers || {},
+    );
     var acc = {
       content: "",
       reasoning_content: "",
@@ -156,64 +173,82 @@ function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
       raw: { id: "", usage: null },
     };
     var buf = "";
-    var req = lib.request({
-      protocol: u.protocol,
-      hostname: u.hostname,
-      port: u.port || (u.protocol === "https:" ? 443 : 80),
-      path: u.pathname + u.search,
-      method: "POST",
-      headers: hdrs,
-    }, function (res) {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        var errChunks = [];
-        res.on("data", function (c) { errChunks.push(c); });
-        res.on("end", function () {
-          var raw = Buffer.concat(errChunks).toString("utf8");
-          reject(new Error("openai-hop-session: HTTP " + res.statusCode + " " + raw.slice(0, 300)));
-        });
-        return;
-      }
-      res.on("data", function (chunk) {
-        buf += chunk.toString("utf8");
-        var parts = buf.split("\n");
-        buf = parts.pop() || "";
-        for (var i = 0; i < parts.length; i++) {
-          var line = parts[i].trim();
-          if (!line || line.indexOf("data:") !== 0) continue;
-          var data = line.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-          try {
-            var json = JSON.parse(data);
-            if (json.id) acc.raw.id = json.id;
-            if (json.usage) acc.raw.usage = json.usage;
-            var choice = json.choices && json.choices[0];
-            if (!choice) continue;
-            if (choice.finish_reason) acc.finish_reason = choice.finish_reason;
-            var delta = choice.delta || {};
-            if (delta.reasoning_content) {
-              acc.reasoning_content += delta.reasoning_content;
-              if (onDelta) onDelta({ type: "reasoning", textDelta: delta.reasoning_content });
-            }
-            if (delta.content) {
-              acc.content += delta.content;
-              if (onDelta) onDelta({ type: "text", textDelta: delta.content });
-            }
-            if (delta.tool_calls) mergeToolCallDelta(acc, delta.tool_calls);
-          } catch (_e) {
-            /* skip malformed SSE line */
-          }
+    var req = lib.request(
+      {
+        protocol: u.protocol,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === "https:" ? 443 : 80),
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: hdrs,
+      },
+      (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          var errChunks = [];
+          res.on("data", (c) => {
+            errChunks.push(c);
+          });
+          res.on("end", () => {
+            var raw = Buffer.concat(errChunks).toString("utf8");
+            reject(
+              new Error(
+                "openai-hop-session: HTTP " +
+                  res.statusCode +
+                  " " +
+                  raw.slice(0, 300),
+              ),
+            );
+          });
+          return;
         }
-      });
-      res.on("end", function () {
-        resolve(buildTurnOut(acc));
-      });
-    });
+        res.on("data", (chunk) => {
+          buf += chunk.toString("utf8");
+          var parts = buf.split("\n");
+          buf = parts.pop() || "";
+          for (var i = 0; i < parts.length; i++) {
+            var line = parts[i].trim();
+            if (!line || line.indexOf("data:") !== 0) continue;
+            var data = line.slice(5).trim();
+            if (!data || data === "[DONE]") continue;
+            try {
+              var json = JSON.parse(data);
+              if (json.id) acc.raw.id = json.id;
+              if (json.usage) acc.raw.usage = json.usage;
+              var choice = json.choices && json.choices[0];
+              if (!choice) continue;
+              if (choice.finish_reason)
+                acc.finish_reason = choice.finish_reason;
+              var delta = choice.delta || {};
+              if (delta.reasoning_content) {
+                acc.reasoning_content += delta.reasoning_content;
+                if (onDelta)
+                  onDelta({
+                    type: "reasoning",
+                    textDelta: delta.reasoning_content,
+                  });
+              }
+              if (delta.content) {
+                acc.content += delta.content;
+                if (onDelta)
+                  onDelta({ type: "text", textDelta: delta.content });
+              }
+              if (delta.tool_calls) mergeToolCallDelta(acc, delta.tool_calls);
+            } catch (_e) {
+              /* skip malformed SSE line */
+            }
+          }
+        });
+        res.on("end", () => {
+          resolve(buildTurnOut(acc));
+        });
+      },
+    );
     if (session) session._activeReq = req;
-    req.setTimeout(timeoutMs || 180000, function () {
+    req.setTimeout(timeoutMs || 180000, () => {
       req.destroy();
       reject(new Error("openai-hop-session: upstream timeout"));
     });
-    req.on("error", function (err) {
+    req.on("error", (err) => {
       if (session && session._activeReq === req) session._activeReq = null;
       if (gen !== session._turnGen) {
         reject(new Error("openai-hop-session: aborted"));
@@ -225,7 +260,7 @@ function postStream(urlStr, body, headers, timeoutMs, session, gen, onDelta) {
       }
       reject(err);
     });
-    req.on("close", function () {
+    req.on("close", () => {
       if (session && session._activeReq === req) session._activeReq = null;
     });
     req.write(payload);
@@ -237,11 +272,13 @@ function coerceContent(content) {
   if (content == null) return "";
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content.map(function (p) {
-      if (typeof p === "string") return p;
-      if (p && p.type === "text") return p.text || "";
-      return "";
-    }).join("");
+    return content
+      .map((p) => {
+        if (typeof p === "string") return p;
+        if (p && p.type === "text") return p.text || "";
+        return "";
+      })
+      .join("");
   }
   return String(content);
 }
@@ -285,14 +322,17 @@ OpenAiHopSession.prototype._headers = function _headers() {
 OpenAiHopSession.prototype._body = function _body(turn, stream) {
   turn = turn || {};
   var messages = turn.messages;
-  if (!Array.isArray(messages)) messages = [{ role: "user", content: String(turn.content || turn.prompt || "") }];
+  if (!Array.isArray(messages))
+    messages = [
+      { role: "user", content: String(turn.content || turn.prompt || "") },
+    ];
   var body = {
     model: this.modelId,
     messages: messages,
     stream: stream === true,
   };
   if (Array.isArray(turn.tools) && turn.tools.length) body.tools = turn.tools;
-  body.max_tokens = turn.max_tokens != null ? turn.max_tokens : 8192;
+  body.max_tokens = turn.max_tokens == null ? 8192 : turn.max_tokens;
   applyMaps(body, {
     modelId: this.modelId,
     baseUrl: this.baseUrl,
@@ -307,12 +347,11 @@ OpenAiHopSession.prototype.runTurn = function runTurn(turn) {
     this._cancelNext = false;
     return Promise.reject(new Error("openai-hop-session: aborted"));
   }
-  var self = this;
   var gen = this._turnGen;
   var body = this._body(turn, false);
   var url = completionsUrl(this.baseUrl);
-  return postJson(url, body, this._headers(), 180000, this).then(function (res) {
-    if (self._turnGen !== gen) throw new Error("openai-hop-session: aborted");
+  return postJson(url, body, this._headers(), 180000, this).then((res) => {
+    if (this._turnGen !== gen) throw new Error("openai-hop-session: aborted");
     if (res.status < 200 || res.status >= 300) {
       var msg = "openai-hop-session: HTTP " + res.status;
       if (res.raw) msg += " " + res.raw.slice(0, 300);
@@ -330,39 +369,56 @@ OpenAiHopSession.prototype.runTurn = function runTurn(turn) {
   });
 };
 
-OpenAiHopSession.prototype.runTurnStream = function runTurnStream(turn, onDelta) {
+OpenAiHopSession.prototype.runTurnStream = function runTurnStream(
+  turn,
+  onDelta,
+) {
   if (this._cancelNext) {
     this._cancelNext = false;
     return Promise.reject(new Error("openai-hop-session: aborted"));
   }
-  var self = this;
   var gen = this._turnGen;
   var body = this._body(turn, true);
   var url = completionsUrl(this.baseUrl);
-  return postStream(url, body, this._headers(), 180000, this, gen, onDelta).then(function (out) {
-    if (self._turnGen !== gen) throw new Error("openai-hop-session: aborted");
+  return postStream(
+    url,
+    body,
+    this._headers(),
+    180000,
+    this,
+    gen,
+    onDelta,
+  ).then((out) => {
+    if (this._turnGen !== gen) throw new Error("openai-hop-session: aborted");
     return out;
   });
 };
 
 OpenAiHopSession.prototype.stream = function stream(turn, handlers) {
   handlers = handlers || {};
-  return this.runTurnStream(turn, function (ev) {
-    if (ev.type === "reasoning" && typeof handlers.onReasoning === "function") handlers.onReasoning(ev.textDelta);
-    if (ev.type === "text" && typeof handlers.onText === "function") handlers.onText(ev.textDelta);
-  }).then(function (out) {
-    if (typeof handlers.onDone === "function") handlers.onDone(out);
-    return out;
-  }, function (err) {
-    if (typeof handlers.onError === "function") handlers.onError(err);
-    throw err;
-  });
+  return this.runTurnStream(turn, (ev) => {
+    if (ev.type === "reasoning" && typeof handlers.onReasoning === "function")
+      handlers.onReasoning(ev.textDelta);
+    if (ev.type === "text" && typeof handlers.onText === "function")
+      handlers.onText(ev.textDelta);
+  }).then(
+    (out) => {
+      if (typeof handlers.onDone === "function") handlers.onDone(out);
+      return out;
+    },
+    (err) => {
+      if (typeof handlers.onError === "function") handlers.onError(err);
+      throw err;
+    },
+  );
 };
 
 function createOpenAiHopSession(opts) {
   var requestKind = opts && opts.requestKind;
   var maxMode = (opts && opts.maxMode) === true;
-  var parameters = Array.isArray(opts && opts.parameters) ? opts.parameters : [];
+  var parameters = Array.isArray(opts && opts.parameters)
+    ? opts.parameters
+    : [];
   return new OpenAiHopSession({
     requestKind: requestKind,
     maxMode: maxMode,
