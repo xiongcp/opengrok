@@ -14,6 +14,7 @@ Phases:
   5. OPEN     — launches the picker UI
 """
 import argparse, json, os, platform, shutil, socket, subprocess, sys, time
+from urllib.error import HTTPError
 import urllib.request
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def http_probe(url, want=None, timeout=4):
         with urllib.request.urlopen(url, timeout=timeout) as r:
             body = r.read(2000).decode("utf-8", "replace")
             return (want is None or want in body), r.getcode(), body
-    except urllib.error.HTTPError as e:
+    except HTTPError as e:
         return (want is not None and str(e.code) == str(want)), e.code, ""
     except Exception as e:
         return False, None, str(e)
@@ -178,10 +179,15 @@ def main():
     if tcp(port):
         say("g", "picker", f"LIVE → http://127.0.0.1:{port}")
         try:
-            if plat == "Windows": os.startfile(f"http://127.0.0.1:{port}")
-            elif plat == "Darwin": subprocess.run(["open", f"http://127.0.0.1:{port}"])
-            else: subprocess.run(["xdg-open", f"http://127.0.0.1:{port}"])
-        except Exception: pass
+            startfile = getattr(os, "startfile", None)
+            if plat == "Windows" and callable(startfile):
+                startfile(f"http://127.0.0.1:{port}")
+            elif plat == "Darwin":
+                subprocess.run(["open", f"http://127.0.0.1:{port}"])
+            else:
+                subprocess.run(["xdg-open", f"http://127.0.0.1:{port}"])
+        except Exception:
+            pass
     else:
         say("r", "picker", "didn't come up — run python tools/model-picker.py manually to see the error")
 

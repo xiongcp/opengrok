@@ -22,7 +22,7 @@ Security notes:
   - No auth: it is a convenience for pushing files when you have a shell but
     no scp. It is NOT the binding consumer — see docs/CLOUD-HOST.md.
 """
-import argparse, os, re, sys
+import argparse, json, os, re, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -33,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "file-relay/1"
 
-    def log_message(self, fmt, *args):  # quiet default
+    def log_message(self, format: str, *args: object) -> None:  # quiet default
         pass
 
     def _send(self, code, body=b"", ctype="text/plain"):
@@ -59,16 +59,23 @@ class Handler(BaseHTTPRequestHandler):
         if not name:
             self._send(400, b'{"error":"bad name"}', "application/json")
             return
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except Exception:
+            length = 0
         if length > MAX_BODY:
             self._send(413, b'{"error":"body too large"}', "application/json")
             return
         body = self.rfile.read(length) if length else b""
         dest = os.path.join(RELAY_DIR, name)
         tmp = dest + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(body)
-        os.replace(tmp, dest)
+        try:
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.replace(tmp, dest)
+        except Exception as e:
+            self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
+            return
         self._send(200, b'{"ok":true,"name":"%s","bytes":%d}' % (name.encode(), len(body)), "application/json")
 
     def do_GET(self):
@@ -86,8 +93,11 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.exists(dest):
             self._send(404, b'{"error":"missing"}', "application/json")
             return
-        with open(dest, "rb") as f:
-            self._send(200, f.read(), "application/octet-stream")
+        try:
+            with open(dest, "rb") as f:
+                self._send(200, f.read(), "application/octet-stream")
+        except Exception:
+            self._send(500, b'{"error":"read error"}', "application/json")
 
 
 def main():
@@ -98,7 +108,10 @@ def main():
     ap.add_argument("--port", type=int, default=8799, help="listen port")
     a = ap.parse_args()
     RELAY_DIR = os.path.abspath(a.dir)
-    os.makedirs(RELAY_DIR, exist_ok=True)
+    try:
+        os.makedirs(RELAY_DIR, exist_ok=True)
+    except Exception:
+        pass
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     print(f"file-relay http://{a.host}:{a.port} -> {RELAY_DIR}", flush=True)
     try:

@@ -606,7 +606,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
 
             models_url = (upstream + "/models") if upstream.endswith("/v1") else (upstream + "/v1/models")
-            headers = {"Accept": "application/json"}
+            headers = {"Accept": "application/json", "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
@@ -642,7 +642,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "max_tokens": 5,
             }).encode("utf-8")
 
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", "User-Agent": "OpenGrok/1.0 (Mozilla/5.0)"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 

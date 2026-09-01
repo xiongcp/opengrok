@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import sys
-import urllib.error
+from urllib.error import HTTPError, URLError
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -67,12 +67,15 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "hermes-hop/1"
 
-    def log_message(self, fmt, *args):  # noqa: N802 - quiet default; line logger below
-        log.info("%s - %s", self.address_string(), fmt % args)
+    def log_message(self, format: str, *args: object) -> None:  # noqa: N802 - quiet default; line logger below
+        log.info("%s - %s", self.address_string(), format % args)
 
     # ---- helpers -------------------------------------------------------
     def _relay(self) -> None:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except Exception:
+            length = 0
         if length > _MAX_BODY:
             self._simple(413, b'{"error":"body too large"}')
             return
@@ -85,12 +88,14 @@ class Handler(BaseHTTPRequestHandler):
             if lname in ("host", "authorization", "content-length", "connection", "accept-encoding"):
                 continue  # rebuilt downstream; accept-encoding off so chunks arrive readable
             req.add_header(name, value)
+        if not req.has_header("User-Agent") or "python-urllib" in req.get_header("User-Agent", "").lower():
+            req.add_header("User-Agent", "OpenGrok/1.0 (Mozilla/5.0)")
         req.add_header("Authorization", "Bearer " + _KEY)
         req.add_header("Accept-Encoding", "identity")
 
         try:
             resp = urllib.request.urlopen(req, timeout=_TIMEOUT)
-        except urllib.error.HTTPError as exc:
+        except HTTPError as exc:
             payload = exc.read() or b""
             self.send_response(exc.code)
             ctype = exc.headers.get("Content-Type") if exc.headers else None
@@ -100,7 +105,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        except (URLError, TimeoutError, ConnectionError) as exc:
             log.warning("upstream unreachable: %r", exc)
             self._simple(502, b'{"error":{"message":"hermes api_server unreachable","type":"hop_error"}}')
             return
@@ -158,11 +163,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _probe_upstream() -> bool:
-    try:
-        with urllib.request.urlopen(UPSTREAM + "/health", timeout=3) as r:
-            return r.getcode() < 500
-    except Exception:
-        return False
+    for path in ("/health", "/healthz", "/v1/models", ""):
+        try:
+            req = urllib.request.Request(
+                UPSTREAM + path,
+                headers={"User-Agent": "OpenGrok/1.0 (Mozilla/5.0)", "Authorization": "Bearer " + _KEY}
+            )
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return r.getcode() < 500
+        except HTTPError as exc:
+            # 401 or 404 still means upstream server is reachable
+            if exc.code < 500:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def main() -> None:

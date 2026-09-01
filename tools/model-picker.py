@@ -36,13 +36,21 @@ Laws: no API keys ever | unknown wire behavior => omit parameters, never guess |
 Agents: <PASTE FROM PICKER> · Wanted: <PLAIN ENGLISH>"""
 
 def load(p, d):
-    try: return json.load(open(p, encoding="utf-8"))
-    except Exception: return d
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return d
 
 def save(p, o):
     t = p + ".tmp"
-    with open(t, "w", encoding="utf-8") as f: json.dump(o, f, indent=2); f.write("\n")
-    os.replace(t, p)
+    try:
+        with open(t, "w", encoding="utf-8") as f:
+            json.dump(o, f, indent=2)
+            f.write("\n")
+        os.replace(t, p)
+    except Exception:
+        pass
 
 def fetch_models(hop):
     """Pull the LIVE route table: [(modelName, routeName), ...] + health blob.
@@ -173,7 +181,8 @@ boot();
 </script></body></html>"""
 
 class H(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
+    def log_message(self, format: str, *args: object) -> None:
+        pass
     def _j(self, code, obj):
         b = json.dumps(obj).encode()
         self.send_response(code); self.send_header("Content-Type","application/json")
@@ -204,7 +213,10 @@ class H(BaseHTTPRequestHandler):
         else: self._j(404, {"err":"nf"})
     def do_POST(self):
         if not self._origin_ok(): return self._j(403, {"err":"forbidden origin"})
-        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except Exception:
+            n = 0
         try: req = json.loads(self.rfile.read(n))
         except Exception: return self._j(400, {"err":"bad json"})
         if self.path == "/api/save":

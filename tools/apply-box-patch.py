@@ -140,7 +140,10 @@ def main():
     ap.add_argument("--bindings", default="/home/box/sand-data/model-bindings.json")
     ap.add_argument("--maps", default="/home/box/sand-data/provider-maps.cjs")
     ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+    try:
+        args = ap.parse_args()
+    except SystemExit:
+        return
 
     if not os.path.exists(args.host):
         die(f"host not found: {args.host}")
@@ -174,7 +177,10 @@ def main():
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ")
     bk = os.path.join(os.path.dirname(args.hop), f"harness-shim-backups-{stamp}")
-    os.makedirs(bk, exist_ok=True)
+    try:
+        os.makedirs(bk, exist_ok=True)
+    except Exception:
+        pass
     for p, name in ((args.host, "host-main.cjs.bak"), (args.hop, "openai-hop-session.cjs.bak")):
         shutil.copy2(p, os.path.join(bk, name))
     if os.path.exists(args.bindings):
