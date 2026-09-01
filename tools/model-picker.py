@@ -49,8 +49,13 @@ def fetch_models(hop):
     Direct when reachable; falls back to box file-relay push (VNC pod is
     localhost-only for :18786, but its file relay CAN curl localhost)."""
     def direct():
-        with urllib.request.urlopen(hop.rstrip("/") + "/health", timeout=6) as r:
-            return json.loads(r.read().decode())
+        for endpoint in ("/health", "/healthz"):
+            try:
+                with urllib.request.urlopen(hop.rstrip("/") + endpoint, timeout=6) as r:
+                    return json.loads(r.read().decode())
+            except Exception:
+                continue
+        return None
     try:
         h = direct()
     except Exception:

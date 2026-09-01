@@ -236,7 +236,7 @@ def try_fix(dead_names: list[str]) -> None:
         "antigravity-shim": ["cscript", "//nologo", str(STARTUP / "antigravity-shim.vbs")],
     }
     if "claude-shim" in dead_names:
-        rd = os.environ.get("CLAUDE_SHIM_DIR") or (HOME / ".claude-shim")
+        rd = Path(os.environ.get("CLAUDE_SHIM_DIR") or (HOME / ".claude-shim"))
         if (rd / "restart-shim.py").exists():
             r = subprocess.run([sys.executable, "restart-shim.py"], cwd=rd,
                                capture_output=True, text=True, timeout=240)
@@ -274,7 +274,9 @@ def run(fix: bool) -> tuple[int, str]:
                  f"{short} changed vs baseline (review; re-run --init to accept)")
     kb = base.get("bindings", {})
     if kb and (kb.get("sha") != bmeta.get("sha")):
-        emit("WARN", "drift:bindings", f"agent sha changed ({kb.get('sha','')[:8]}…->{bmeta.get('sha','')[:8]}…)")
+        old_sha = (kb.get("sha") or "")[:8]
+        new_sha = (bmeta.get("sha") or "")[:8]
+        emit("WARN", "drift:bindings", f"agent sha changed ({old_sha}…->{new_sha}…)")
     kc = base.get("config_flags", {})
     for prov, cur in cfgflags.items():
         prev = kc.get(prov)
