@@ -1,186 +1,245 @@
 <p align="center">
-  <img src="assets/hero.png" alt="open·grok — run any model in Grok Bot: one model per agent, pick, test, save. keys stay on your machine. pick a model → wire map applies → talks native → survives updates" width="100%">
+  <img src="assets/hero.png" alt="OpenGrok — Advanced AI Middleware & Multi-Model Gateway for Grok Bot" width="100%">
+</p>
+
+<p align="center">
+  <a href="README_CN.md"><b>🇨🇳 中文文档</b></a> | <b>English Documentation</b>
 </p>
 
 <p align="center">
   <a href="#-quick-start"><img alt="setup" src="https://img.shields.io/badge/setup-one%20command-7c6cff"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-3fb950"></a>
-  <a href="#-the-laws"><img alt="evidence" src="https://img.shields.io/badge/maps-evidence--based-a78bfa"></a>
-  <a href="https://github.com/OnlyTerp/opengrok/actions/workflows/verify.yml"><img alt="verify" src="https://github.com/OnlyTerp/opengrok/actions/workflows/verify.yml/badge.svg"></a>
+  <a href="#-architecture--the-5-layer-routing-hierarchy"><img alt="routing" src="https://img.shields.io/badge/routing-5--layer%20hierarchy-a78bfa"></a>
+  <a href="#-zero-downtime-hot-reloading"><img alt="hot reload" src="https://img.shields.io/badge/hot--reload-zero%20downtime-f59e0b"></a>
   <img alt="deps" src="https://img.shields.io/badge/dependencies-zero-2f81f7">
-  <img alt="platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-8b949e">
+  <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-8b949e">
 </p>
 
 <p align="center">
-  <b>Pick a model per agent. Save. Keys stay on the hop, not in bindings.</b><br>
-  Stock Grok Bot 0.30 needs the box installer. Mac-only setup does not route chat.
+  <b>Route any AI model to Grok Bot with zero restarts, wildcard slug matching, multi-agent dispatch, and native fallback.</b><br>
+  Keys stay in private secure storage, never hardcoded in configurations or repositories.
 </p>
 
 ---
 
-<p align="center">
-  <img src="assets/picker.png" alt="the model picker — one dropdown per agent" width="640">
-</p>
+## 📖 Table of Contents
 
-## Quick start
+- [Overview & Evolution](#-overview--evolution)
+- [Key Features](#-key-features)
+- [Architecture & The 5-Layer Routing Hierarchy](#-architecture--the-5-layer-routing-hierarchy)
+- [Quick Start](#-quick-start)
+- [Remote Management (Tailscale Web Console)](#-remote-management-tailscale-web-console)
+- [Model Mapping & Wildcard Interception](#-model-mapping--wildcard-interception)
+- [Native Grok Bypass & Fail-Safe Mode](#-native-grok-bypass--fail-safe-mode)
+- [Zero-Downtime Hot Reloading](#-zero-downtime-hot-reloading)
+- [Automated Watchdog Daemon](#-automated-watchdog-daemon)
+- [Testing & Quality Assurance](#-testing--quality-assurance)
+- [Fork Attribution & Copyright Notice](#-fork-attribution--copyright-notice)
+- [License](#-license)
 
-**Stock Grok Bot cloud computer (the common case).** Do this on the Bot's
-computer, not only on your laptop. Full write-up: [STOCK-HOST](docs/STOCK-HOST.md).
+---
 
-```bash
-git clone https://github.com/OnlyTerp/opengrok
-cd opengrok
-export API_SERVER_KEY='your-provider-key'
-python3 tools/install-stock-box.py \
-  --upstream http://YOUR-OPENAI-COMPAT-HOST:PORT \
-  --model glm-5.3-flash
+## 🌟 Overview & Evolution
+
+**OpenGrok** is a high-performance, update-resilient AI orchestration middleware designed for Grok Bot cloud environments. It sits transparently between the Grok Bot host engine (`host-main.cjs`) and upstream AI providers, allowing you to bypass vendor lock-in, eliminate quota constraints, and route requests to any custom OpenAI-compatible API (including Claude 3.7, Gemini 3.7 Pro, DeepSeek-R1, GLM-5, GPT-4o, and local Ollama/vLLM endpoints).
+
+This project originated as an enhanced fork of [OnlyTerp/opengrok](https://github.com/OnlyTerp/opengrok) and has evolved into an autonomous, enterprise-grade AI middleware system featuring full zero-restart hot-reloading, a modern Tailscale Web Console, automated anti-tamper host injection watchdogs, and multi-dimensional wildcard routing.
+
+---
+
+## 🚀 Key Features
+
+- ⚡ **Zero-Downtime Hot Reloading**: Update models, API endpoints, tokens, and routing rules on-the-fly. Next-turn dynamic evaluation means zero downtime and no dropped streams.
+- 🧩 **5-Layer Multi-Dimensional Routing Hierarchy**: Dispatches requests by Agent UUID, exact model slug, glob wildcards (`grok-4.5-*`, `sand-*`), global fallback (`*`), or native bypass.
+- 🛡️ **Autonomous Watchdog Daemon**: Background thread automatically detects when the sandbox supervisor resets `host-main.cjs` to a stock image and re-injects OpenGrok hooks.
+- 🌀 **Native Grok Coexistence & Fail-Safe**: Keep native xAI Grok-4.5/4.6 models active alongside external third-party models using `provider: "native"`. Corrupted or missing configs gracefully degrade to native Grok instead of crashing.
+- 🌐 **Tailscale Web Control Center**: Modern SaaS-style dark UI with real-time process monitoring, live session log inspection, preset model selectors, and named Agent pickers.
+- 🔒 **Enterprise-Grade Security & WAF Bypass**: Strict credential isolation with mode-600 files, browser-standard User-Agent rotation to bypass Cloudflare WAF, and atomic file transactions (`os.replace`) to prevent corrupted reads.
+- 🎯 **Deep Reasoning & Thinking Control**: Seamlessly translate thinking parameters, extended thinking budgets, and dynamic keyword-triggered thinking (`effortWhen`) across all upstream dialects.
+
+---
+
+## 🏗️ Architecture & The 5-Layer Routing Hierarchy
+
+```
+                    Incoming Grok Bot Client Request
+                                  │
+                                  ▼
+           ┌──────────────────────────────────────────────┐
+           │ Layer 1: Agent UUID Specific Binding         │  (e.g., "taylor" -> GLM-5.3-Coding)
+           └──────────────────────┬───────────────────────┘
+                                  │ (No match)
+           ┌──────────────────────▼───────────────────────┐
+           │ Layer 2: Exact Model Slug Mapping            │  (e.g., "gemini-2.5-flash" -> Claude-3.7)
+           └──────────────────────┬───────────────────────┘
+                                  │ (No match)
+           ┌──────────────────────▼───────────────────────┐
+           │ Layer 3: Wildcard Glob Pattern Matching      │  (e.g., "grok-4.5-*" -> Gemini-3.7-Pro)
+           └──────────────────────┬───────────────────────┘
+                                  │ (No match)
+           ┌──────────────────────▼───────────────────────┐
+           │ Layer 4: Global Wildcard Default (*)         │  (e.g., "*" -> DeepSeek-R1)
+           └──────────────────────┬───────────────────────┘
+                                  │ (Unset)
+           ┌──────────────────────▼───────────────────────┐
+           │ Layer 5: Native Stock Passthrough            │  (Degrades safely to sandbox stock Grok)
+           └──────────────────────────────────────────────┘
 ```
 
-Bounce `sand-host`, then send a normal message in the Bot. Proof is
-`/tmp/opengrok-session.log` and traffic on `127.0.0.1:18790`.
+---
 
-### 🌐 Remote Management via Tailscale
+## ⚡ Quick Start
 
-If you have Tailscale installed on the Grok Bot box, launch the remote Web Dashboard:
+### 1. Installation on Grok Bot Sandbox (Recommended)
+
+Run directly on the Grok Bot cloud computer:
+
+```bash
+git clone https://github.com/xiongcp/opengrok.git
+cd opengrok
+
+# Set your upstream provider key (stored in sand-data/.api_key, never in configs)
+export API_SERVER_KEY="your-api-key"
+
+# Install and inject the runtime wrapper
+python3 tools/install-stock-box.py \
+  --upstream https://api.your-provider.com/v1 \
+  --model gemini-3.7-flash-high
+```
+
+Send a message in Grok Bot. Verification proof is visible in `/tmp/opengrok-session.log` and traffic routed via `127.0.0.1:18790`.
+
+---
+
+## 🌐 Remote Management (Tailscale Web Console)
+
+Launch the built-in Web Control Panel on the sandbox host:
 
 ```bash
 python3 tools/remote-dashboard.py --port 8888 --host 0.0.0.0
 ```
 
-Open `http://<tailscale-ip>:8888` on your phone or laptop on the same Tailnet to:
+Open `http://<tailscale-ip>:8888` on your phone or laptop connected to the same Tailnet:
 
-- Switch models & upstream endpoints with one click
-- Test live model connectivity
-- Re-wrap Grok Bot host after updates
-- Watch real-time `/tmp/opengrok-session.log` session logs
-
-See [REMOTE-TAILSCALE](docs/REMOTE-TAILSCALE.md) for the complete guide.
-
-`python setup.py` on your Mac still builds bindings and the picker. That
-does **not** make stock Grok Bot read them. `apply-box-patch.py` refuses a
-stock host and points here (issues #3, #5).
-
-```bash
-python tools/doctor.py        # anytime: is everything still healthy?
-python tools/qa.py            # repo self-check: leaks, refs, tests
-```
-
-## What it gives each model
-
-Dropping a foreign model into Grok Bot usually "works" and feels *off* — slower,
-dumber, token-hungry. That's harness mismatch: the model was RL-trained on its
-own harness's wire shape, and gets a generic prompt shape plus wrong reasoning
-knobs. opengrok fixes the wire:
-
-| Model family | What goes wrong vanilla | What opengrok does |
-| --- | --- | --- |
-| **Grok (xAI)** | effort knob is `xhigh`, not `max`; `fast` has no field | literal token mapping, always-on reasoning documented |
-| **GLM (Zhipu)** | thinks by default — silence is *expensive*; `max` is a real | verified token table + true off-switch via `thinking:disabled` |
-| **Claude** | thinking is owned by the auth shim; body-painting it 400s | shim-owned thinking, effort passes clean |
-| **Gemini** | "fast" was decorative — the knob is the *slug*, not a field | fast lane rerouting, measured 1.5s → 0.9s first token |
-| **DeepSeek** | thinking lives in the model slug, not the body | slug-owns-thinking mapping |
-| **local models** | context/recovery edges | dedicated route, fail-closed |
-
-Every row of that table is backed by a capture in `wire-captures/`
-(see [glm-5.3-flash](wire-captures/glm-5.3-flash/) for the full ladder —
-bare request thinks by default, `disabled` really switches it off, `max` is a
-real token).
-
-## How it fits together
-
-```
- Grok Bot agent
-      │  modelId + parameters (thinking/effort/fast)
-      ▼
- provider-maps ──► per-provider wire truth (verified, versioned, tested)
-      │
-      ▼
- upstream (xAI / Zhipu / Anthropic / Google / DeepSeek / local llama.cpp)
-```
-
-**Two contracts, one story:**
-
-- `provider-maps.cjs` — Contract A: direct body maps (client-side lanes)
-- `provider-maps-hop.cjs` — Contract B: `applyHarnessControls()` for hop lanes — this is what ships on the box
-
-**Cloud agents.** Stock hosts wrap `createProtoSession` via
-`tools/install-stock-box.py`. Hosts that still contain the private OpenAI hop
-lane can use `tools/apply-box-patch.py`. See [STOCK-HOST](docs/STOCK-HOST.md)
-and [CLOUD-HOST](docs/CLOUD-HOST.md).
-
-## Update-proof by design
-
-Grok Bot updates silently rewrite its bundle. Instead of hoping:
-
-- `doctor.py` **baselines your machine** on setup and watches files, services,
-  and caches — after any update it tells you *exactly what moved*
-- `--quiet` mode stays silent when clean (cron-friendly), complains only on drift
-- maps hot-reload; no restart needed to fix a route
-- after a host update, re-run `install-stock-box.py` (wrap is idempotent, and
-  `--census-only` tells you if `createProtoSession` vanished)
-
-## The laws
-
-Hard-won rules this repo encodes — each one earned by a real failure:
-
-- **Evidence or it doesn't ship.** No map lands without a wire capture (`tools/wire-probe.py`).
-- **200-accepted ≠ honored.** A field that 200s and does nothing is worse than a 400. Behavior-prove every knob.
-- **Silence is not cheap.** Several providers think by default; a bare request burns reasoning tokens.
-- **Shared connection pools break under load; fresh-connection-per-call triggers throttling.** Thread-local keep-alive or nothing.
-- **Fail-closed over fake success.** If a control can't be expressed on the wire, document the noop — never pretend.
-
-## Testing (how we know it's true)
-
-```bash
-node tools/test-provider-maps.cjs          # Contract A
-node tools/test-provider-maps-hop.cjs      # Contract B
-python tools/test-wrap-proto-session.py    # stock createProtoSession wrap
-node tools/test-openai-hop-session.cjs     # shipped hop session
-python tools/qa.py                         # leak scan, ref integrity, suites
-```
-
-CI runs these on every push and PR. The QA tool is itself
-negative-control-tested: plant a fake key or break a file and it **fails
-loudly** — a green that can't fail is decoration.
-
-## Adding a provider
-
-```bash
-python tools/wire-probe.py --base https://api.example.com/v1 --model their-model --key-env THEIR_API_KEY
-```
-
-Run it, paste the verdict into a PR with the capture attached.
-`CONTRIBUTING.md` has the contract — **no capture, no merge.**
-
-## Voice assistant (voice/)
-
-A full local realtime voice assistant built on the same wire-truth philosophy:
-
-- **Ears** — streaming STT (Grok/xAI), energy-gated turn detection
-- **Captain** — OpenAI realtime brain (`gpt-realtime-2.1`) with consult/dispatch tools
-- **Mouth** — ElevenLabs TTS (any voice, including your own clone), never-flush queue, barge-in
-
-Browser panel UI, zero native audio deps, all lanes localhost-only. Setup is a
-guided walkthrough (ElevenLabs key + Codex CLI login + Grok CLI login), with a
-doctor that tells you exactly what's missing:
-
-```powershell
-node voice/doctor.js                      # pre-flight check
-voice\scripts\start-voice.ps1             # start everything, open the panel
-```
-
-See [voice/README.md](voice/README.md) · [voice/SETUP.md](voice/SETUP.md).
-
-## Status
-
-- Stock Grok Bot 0.30 box install: `install-stock-box.py` (this fork)
-- Private OpenAI-hop host: `apply-box-patch.py` (refuses stock bundles)
-- Maps live-verified: Grok, GLM, Claude plans, Gemini (incl. fast lane), DeepSeek, local llama.cpp
-- Pattern proven, capture pending: OpenRouter, Groq, Mistral, xAI OAuth
-- Docs: [STOCK-HOST](docs/STOCK-HOST.md) · [REMOTE-TAILSCALE](docs/REMOTE-TAILSCALE.md) · [MODEL-GUIDELINES](docs/MODEL-GUIDELINES.md) · [BYOK vs hop](docs/BYOK-DECISION.md) · [FAILURE-MODES](docs/FAILURE-MODES.md) · [CLOUD-HOST](docs/CLOUD-HOST.md) · [ROADMAP](docs/ROADMAP.md)
+- **🌟 Primary Model**: One-click configuration with presets for Claude 3.7, DeepSeek-R1, Gemini 2.5/3.7, xAI Grok, and OpenAI GPT-4o.
+- **🤖 Agent Routing**: View named agents extracted automatically from `sand-data/agents/<uuid>/profile.json`.
+- **🧩 Model Mapping**: Configure model-level substitution and wildcard matching rules.
+- **⚡ Adaptive Depth (`effortWhen`)**: Automatically scale reasoning effort up on complex keywords (e.g. `refactor`, `audit`, `security`) and down on status commands (`git diff`, `test`).
+- **🛠️ System Diagnostics**: Real-time status badges for sand-host, hop proxy, wrap status, and the watchdog daemon.
+- **📜 Live Session Logs**: Real-time log streamer with filter chips (Route, Error, Tool, Effort).
 
 ---
 
-<p align="center">
-  <sub><b>not farming you, arming you.</b></sub>
-</p>
+## 🧩 Model Mapping & Wildcard Interception
+
+Take control over what happens when the client asks for specific model slugs:
+
+Edit `sand-data/model-bindings.json` (or use the **🧩 Model Mapping** tab in the Web UI):
+
+```json
+{
+  "agents": {
+    "*": {
+      "modelId": "gemini-3.7-flash-high",
+      "provider": "custom",
+      "hopBaseUrl": "http://127.0.0.1:18790/v1",
+      "parameters": [
+        { "id": "effort", "value": "high" },
+        { "id": "thinking", "value": "true" }
+      ]
+    }
+  },
+  "models": {
+    "grok-4.5-*": {
+      "modelId": "glm-5.3-flash",
+      "provider": "custom",
+      "hopBaseUrl": "http://127.0.0.1:18790/v1"
+    },
+    "grok-4.6": {
+      "provider": "native"
+    },
+    "sand-*": {
+      "modelId": "gemini-3.7-flash-high",
+      "provider": "custom",
+      "hopBaseUrl": "http://127.0.0.1:18790/v1"
+    }
+  }
+}
+```
+
+- Any request matching `grok-4.5-*` (e.g., `grok-4.5-medium`, `grok-4.5-high`) routes to **GLM-5.3-Flash**.
+- Requests for `grok-4.6` stay **Native** without consuming third-party API quotas.
+- Background auxiliary tasks (`sand-*`) route to **Gemini 3.7 Flash High**.
+
+---
+
+## 🌀 Native Grok Bypass & Fail-Safe Mode
+
+Setting `"provider": "native"` on any agent or model mapping explicitly routes calls to the stock sandbox engine:
+
+1. **Zero Resource Waste**: Leverage sandbox-bundled xAI Grok-4.5/4.6 compute alongside external models.
+2. **Fail-Safe Passthrough**: If bindings are missing, unparseable, or invalid, OpenGrok automatically degrades to the native engine rather than crashing in-flight user sessions.
+
+---
+
+## ⚡ Zero-Downtime Hot Reloading
+
+Unlike legacy setups, OpenGrok **never requires process restarts** for everyday configuration changes:
+
+- `opengrok-runtime.cjs` performs fresh dynamic file reads on each conversation turn.
+- `hop-server.py` hot-reads upstream endpoints and authorization keys per HTTP request.
+- Changes applied via the Web Dashboard or file edits take effect immediately on the next message turn.
+
+---
+
+## 🛡️ Automated Watchdog Daemon
+
+Cloud sandbox supervisors frequently restore stock copies of `host-main.cjs` during updates or process recycling, silently wiping user patches.
+
+OpenGrok includes an embedded Watchdog Daemon:
+- Runs continuously in the background (default 30-second interval, configurable via `OPENGROK_WRAP_WATCHDOG_SEC`).
+- Detects unwrapped host files and automatically executes an atomic re-wrap without touching user configurations.
+- Reports health, last check timestamp, and total re-wrap events directly to the Web UI.
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+Run the comprehensive zero-regression test suite locally or on the box:
+
+```bash
+# Full test suite (contract tests, hop session, runtime routing, and leak scan)
+python3 tools/qa.py
+
+# Specialized test runners
+node tools/test-opengrok-runtime.cjs     # 5-layer precedence matrix & native routing
+python3 tools/test-hop-server.py          # /v1 URL joining & per-request hot-read
+node tools/test-provider-maps.cjs        # Contract A wire maps
+node tools/test-provider-maps-hop.cjs    # Contract B hop wire maps
+python3 tools/test-wrap-proto-session.py # Prototype wrapper census & AST injector
+```
+
+---
+
+## 📜 Fork Attribution & Copyright Notice
+
+This project is an advanced, independent evolution developed from [OnlyTerp/opengrok](https://github.com/OnlyTerp/opengrok) (MIT License, Copyright (c) 2026 OnlyTerp).
+
+We gratefully acknowledge the original architecture and community contributions, including:
+
+- Foundational wire mapping concepts and evidence-based testing philosophy by [OnlyTerp](https://github.com/OnlyTerp).
+- Cloud host session wrapping and stream parsing prototypes by [simo255](https://github.com/simo255).
+
+### Key Architectural Advancements in this Fork
+
+1. Full zero-downtime hot-reloading architecture for both runtime hooks and proxy relays.
+2. 5-Layer routing hierarchy supporting wildcard glob slug matching and per-model substitutions.
+3. Native Grok coexistence (`provider: "native"`) and fail-safe fallback engine.
+4. Autonomous anti-tamper Watchdog Daemon.
+5. Modern Tailscale Web Control Center with real-time log streaming, named agent extraction, and mobile responsiveness.
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

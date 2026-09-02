@@ -10,6 +10,7 @@ var http = require("http");
 var https = require("https");
 var path = require("path");
 var { URL } = require("url");
+var { spawn } = require("child_process");
 
 function completionsUrl(baseUrl) {
   var b = String(baseUrl || "").replace(/\/+$/, "");
@@ -329,6 +330,94 @@ function coerceContent(content) {
   return String(content);
 }
 
+function isPiRoute(provider, modelId) {
+  var p = String(provider || "").toLowerCase();
+  var m = String(modelId || "").toLowerCase();
+  return (
+    p === "pi" ||
+    p === "pi-agent" ||
+    m === "pi" ||
+    m.startsWith("pi-") ||
+    m.startsWith("pi/")
+  );
+}
+
+function runPiSubprocess(session, turn, stream, onDelta) {
+  return new Promise((resolve, reject) => {
+    var messages = (turn && turn.messages) || [];
+    var lastUserMsg = "";
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && messages[i].role === "user") {
+        lastUserMsg = coerceContent(messages[i].content);
+        break;
+      }
+    }
+    if (!lastUserMsg)
+      lastUserMsg = String((turn && (turn.content || turn.prompt)) || "");
+
+    var args = ["-p", lastUserMsg];
+    var m = String(session.modelId || "");
+    if (m.startsWith("pi-")) m = m.slice(3);
+    else if (m.startsWith("pi/")) m = m.slice(3);
+    if (m && m !== "agent" && m !== "default" && m !== "pi") {
+      args.push("--model", m.includes("/") ? m : "opengrok/" + m);
+    }
+
+    var env = Object.assign({}, process.env, {
+      PATH:
+        "/home/box/.local/node/bin:/home/box/.local/bin:" +
+        (process.env.PATH || ""),
+    });
+
+    var proc = spawn("pi", args, {
+      cwd: (turn && turn.cwd) || process.cwd(),
+      env: env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    if (session)
+      session._activeReq = {
+        destroy: () => {
+          try {
+            proc.kill();
+          } catch (_) {}
+        },
+      };
+
+    var fullContent = "";
+    proc.stdout.on("data", (chunk) => {
+      var txt = chunk.toString("utf8");
+      fullContent += txt;
+      if (stream && typeof onDelta === "function") {
+        onDelta({ type: "text", textDelta: txt });
+      }
+    });
+
+    proc.stderr.on("data", (chunk) => {
+      var errTxt = chunk.toString("utf8");
+      if (stream && typeof onDelta === "function") {
+        onDelta({ type: "reasoning", textDelta: errTxt });
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (session && session._activeReq) session._activeReq = null;
+      resolve({
+        content: fullContent,
+        reasoning_content: "",
+        tool_calls: [],
+        finish_reason: "stop",
+        raw: { pi_exit_code: code },
+      });
+    });
+
+    proc.on("error", (err) => {
+      if (session && session._activeReq) session._activeReq = null;
+      reject(err);
+    });
+  });
+}
+
 function OpenAiHopSession(opts) {
   opts = opts || {};
   this.requestKind = opts.requestKind;
@@ -395,6 +484,9 @@ OpenAiHopSession.prototype.runTurn = function runTurn(turn) {
     this._cancelNext = false;
     return Promise.reject(new Error("openai-hop-session: aborted"));
   }
+  if (isPiRoute(this.provider, this.modelId)) {
+    return runPiSubprocess(this, turn, false, null);
+  }
   var gen = this._turnGen;
   var body = this._body(turn, false);
   var url = completionsUrl(this.baseUrl);
@@ -424,6 +516,9 @@ OpenAiHopSession.prototype.runTurnStream = function runTurnStream(
   if (this._cancelNext) {
     this._cancelNext = false;
     return Promise.reject(new Error("openai-hop-session: aborted"));
+  }
+  if (isPiRoute(this.provider, this.modelId)) {
+    return runPiSubprocess(this, turn, true, onDelta);
   }
   var gen = this._turnGen;
   var body = this._body(turn, true);
