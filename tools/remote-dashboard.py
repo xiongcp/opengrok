@@ -595,6 +595,7 @@ PAGE_HTML = r"""<!doctype html>
     <button class="tab active" data-tab="primary" onclick="switchTab('primary',this)">🌟 主力模型</button>
     <button class="tab" data-tab="agents" onclick="switchTab('agents',this)">🤖 Agent 路由</button>
     <button class="tab" data-tab="models" onclick="switchTab('models',this)">🧩 模型映射</button>
+    <button class="tab" data-tab="hook" onclick="switchTab('hook',this)">🎯 智能 Hook</button>
     <button class="tab" data-tab="adaptive" onclick="switchTab('adaptive',this)">⚡ 自适应深度</button>
     <button class="tab" data-tab="system" onclick="switchTab('system',this)">🛠️ 系统运维</button>
     <button class="tab" data-tab="logs" onclick="switchTab('logs',this)">📜 实时日志</button>
@@ -603,8 +604,14 @@ PAGE_HTML = r"""<!doctype html>
   <!-- 主力模型 -->
   <section id="tab-primary" class="panel active">
     <div class="card">
-      <h2>渠道预设</h2>
-      <div class="hint">点击快速填充。自有渠道不回写仓库——从沙箱当前配置实时读取。</div>
+      <h2>渠道预设与 Hook 模式</h2>
+      <div class="hint">点击快速填充。支持一键切换精准 Bug 修复 Hook 或全量智能体接管。</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn sm" type="button" onclick="applyHookPreset('fix')" style="background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.4);color:var(--ok)">🎯 精准 Bug 修复 Hook (推荐)</button>
+        <button class="btn sm" type="button" onclick="applyHookPreset('full')" style="background:rgba(99,102,241,.18);border:1px solid rgba(99,102,241,.4);color:var(--accent2)">⚡ 全面 Hook 接管</button>
+        <button class="btn ghost sm" type="button" onclick="applyHookPreset('proxy')">🌀 仅模型中继</button>
+        <button class="btn ghost sm" type="button" onclick="applyHookPreset('native')">🌱 原生直通</button>
+      </div>
       <div class="preset-grid">
         <button class="preset own" onclick="useCurrentConfig()"><span class="p-name">✨ 我的自有渠道</span><span class="p-model">读取沙箱当前配置</span></button>
         <button class="preset" onclick="setPreset('xai-grok4')"><span class="p-name">⚡ xAI Grok-4.6</span><span class="p-model">grok-4.6</span></button>
@@ -687,6 +694,47 @@ PAGE_HTML = r"""<!doctype html>
         <thead><tr><th>请求模型 (slug)</th><th>路由目标</th><th>实际模型</th><th>推理</th><th style="width:130px">操作</th></tr></thead>
         <tbody id="modelsBody"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- 智能 Hook -->
+  <section id="tab-hook" class="panel">
+    <div class="card">
+      <h2>🚀 Grok Bot / Cloud Cursor 智能 Hook 控制</h2>
+      <div class="hint">接管沙箱中发起的代码修改与 PR 修复任务，直接由沙箱内置的 <b>Pi 智能体</b> 原地执行、静态诊断与测试闭环，彻底脱离 Cursor Cloud 额度限制。</div>
+
+      <div class="preset-grid" style="margin-bottom:18px">
+        <button class="preset own" onclick="applyHookPreset('fix')" style="border-color:rgba(52,211,153,.4)"><span class="p-name">🎯 精准 Bug 修复 Hook (推荐)</span><span class="p-model">仅在触发修 Bug / 报错 / PR 修复时接管给 Pi，日常聊天走常规模型</span></button>
+        <button class="preset" onclick="applyHookPreset('full')" style="border-color:rgba(99,102,241,.4)"><span class="p-name">⚡ 全面接管 Hook (Full Hook)</span><span class="p-model">全量请求（日常问答、修 Bug、子代理）100% 均由本地 Pi 自主调度</span></button>
+        <button class="preset" onclick="applyHookPreset('proxy')"><span class="p-name">🌀 仅 API 中继代理</span><span class="p-model">常规 OpenAI 兼容协议中继转发，不拉起本地 Pi 进程</span></button>
+        <button class="preset" onclick="applyHookPreset('native')"><span class="p-name">🌱 原生直通</span><span class="p-model">完全保留沙箱自带的 xAI Grok 原生引擎</span></button>
+      </div>
+
+      <div class="fg">
+        <label class="switch" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+          <input type="checkbox" id="swHookEnabled">
+          <span class="track"></span>
+          <span style="font-weight:700;color:var(--text)">启用代码修复 Hook (fixHook)</span>
+        </label>
+        <div class="help">开启后，检测到代码修复意图时，OpenGrok 会在沙箱中直接拉起 Pi 原地分析、改动代码并运行单元测试。</div>
+      </div>
+
+      <div class="fg">
+        <label>Pi 执行目标模型（Target Model）</label>
+        <input id="inHookTargetModel" placeholder="gemini-3.7-flash-high / claude-3-7-sonnet / deepseek-reasoner" value="gemini-3.7-flash-high">
+        <div class="help">Pi 智能体底层使用的推理模型（可通过沙箱本地 127.0.0.1:18790 免密代理）。</div>
+      </div>
+
+      <div class="fg">
+        <label>触发修复的关键词规则（Patterns，英文逗号分隔）</label>
+        <input id="inHookPatterns" placeholder="fix, repair, bug, 修复, 报错, exception, failing test, error in, pr #, 解决问题" value="fix, repair, bug, 修复, 报错, exception, failing test, error in, pr #, 解决问题">
+        <div class="help">当前回合的 Prompt 或上下文匹配到上述任意关键词时，触发 Pi 自动修复闭环。</div>
+      </div>
+
+      <div class="row2" style="margin-top:16px">
+        <button class="btn" id="btnSaveHook" onclick="saveHookSettings(this)">💾 保存 Hook 配置并立即生效</button>
+        <button class="btn ghost" id="btnTestPi" onclick="testPiExecution(this)">🧪 测试沙箱 Pi 连通性</button>
+      </div>
     </div>
   </section>
 
@@ -1296,6 +1344,87 @@ async function fetchSlugs(){
   }catch(e){}
 }
 
+/* ---------- hook tab ---------- */
+function renderHook(){
+  const hook = globalBindings.fixHook || {};
+  $('swHookEnabled').checked = hook.enabled !== false;
+  $('inHookTargetModel').value = hook.targetModel || 'gemini-3.7-flash-high';
+  if (Array.isArray(hook.patterns)) {
+    $('inHookPatterns').value = hook.patterns.join(', ');
+  }
+}
+
+async function applyHookPreset(mode){
+  if (!globalBindings.agents) globalBindings.agents = {};
+  if (!globalBindings.agents['*']) globalBindings.agents['*'] = {provider:'custom', modelId:'gemini-3.7-flash-high', hopBaseUrl:'http://127.0.0.1:18790/v1'};
+  
+  if (mode === 'fix') {
+    $('swHookEnabled').checked = true;
+    const targetModel = $('inHookTargetModel').value.trim() || 'gemini-3.7-flash-high';
+    globalBindings.fixHook = {
+      enabled: true,
+      targetProvider: 'pi',
+      targetModel: targetModel,
+      patterns: $('inHookPatterns').value.split(',').map(s => s.trim()).filter(Boolean)
+    };
+    if (globalBindings.agents['*'].provider === 'pi') {
+      globalBindings.agents['*'].provider = 'custom';
+    }
+    toast('ok', '已应用：🎯 精准 Bug 修复 Hook 模式（日常对话走常规模型，修 Bug 走 Pi）');
+  } else if (mode === 'full') {
+    $('swHookEnabled').checked = true;
+    const targetModel = $('inHookTargetModel').value.trim() || 'gemini-3.7-flash-high';
+    globalBindings.agents['*'].provider = 'pi';
+    globalBindings.agents['*'].modelId = targetModel;
+    globalBindings.fixHook = {
+      enabled: true,
+      targetProvider: 'pi',
+      targetModel: targetModel,
+      patterns: $('inHookPatterns').value.split(',').map(s => s.trim()).filter(Boolean)
+    };
+    toast('ok', '已应用：⚡ 全面接管 Hook 模式（100% 全量会话由沙箱 Pi 接管）');
+  } else if (mode === 'proxy') {
+    $('swHookEnabled').checked = false;
+    globalBindings.agents['*'].provider = 'custom';
+    if (globalBindings.fixHook) globalBindings.fixHook.enabled = false;
+    toast('ok', '已应用：🌀 常规 API 中继模式');
+  } else if (mode === 'native') {
+    $('swHookEnabled').checked = false;
+    globalBindings.agents['*'].provider = 'native';
+    if (globalBindings.fixHook) globalBindings.fixHook.enabled = false;
+    toast('ok', '已应用：🌱 原生 Grok 直通模式');
+  }
+  await syncFullBindings(null);
+}
+
+async function saveHookSettings(btn){
+  const enabled = $('swHookEnabled').checked;
+  const targetModel = $('inHookTargetModel').value.trim() || 'gemini-3.7-flash-high';
+  const patterns = $('inHookPatterns').value.split(',').map(s => s.trim()).filter(Boolean);
+  
+  globalBindings.fixHook = {
+    enabled: enabled,
+    targetProvider: 'pi',
+    targetModel: targetModel,
+    patterns: patterns
+  };
+  await syncFullBindings(btn);
+}
+
+async function testPiExecution(btn){
+  setBusy(btn, true, '正在测试 Pi…');
+  try{
+    const targetModel = $('inHookTargetModel').value.trim() || 'gemini-3.7-flash-high';
+    const d = await api('/api/test-pi', {model: targetModel});
+    if (d.ok){
+      toast('ok', '沙箱 Pi 执行测试通过：' + (d.output || 'OK'));
+    } else {
+      toast('err', 'Pi 测试异常：' + (d.error || d.output || ''));
+    }
+  }catch(e){ toast('err', '测试请求失败：' + e.message); }
+  setBusy(btn, false);
+}
+
 /* ---------- adaptive ---------- */
 async function saveAdaptiveRules(btn){
   const med = $('inEffMed').value.split(',').map(s => s.trim()).filter(Boolean);
@@ -1454,6 +1583,7 @@ async function refreshStatus(syncForm){
 
     renderAgents();
     renderModels();
+    renderHook();
 
     if (syncForm || !$('inUpstream').value){
       if (agent.upstream) $('inUpstream').value = agent.upstream;
@@ -1596,6 +1726,24 @@ class Handler(BaseHTTPRequestHandler):
             req_data = json.loads(body.decode("utf-8")) if body else {}
         except Exception:
             req_data = {}
+
+        if self.path == "/api/test-pi":
+            model = req_data.get("model", "gemini-3.7-flash-high")
+            try:
+                env = os.environ.copy()
+                env["PATH"] = "/home/box/.local/node/bin:/home/box/.local/bin:" + env.get("PATH", "")
+                r = subprocess.run(
+                    ["pi", "-p", "Say OK if you can read this.", "--thinking", "off", "--model", f"opengrok/{model}"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=15,
+                )
+                out = (r.stdout or "") + (r.stderr or "")
+                self._json(200, {"ok": r.returncode == 0, "output": out.strip()})
+            except Exception as e:
+                self._json(500, {"ok": False, "error": str(e)})
+            return
 
         if self.path == "/api/clear-log":
             try:
