@@ -193,6 +193,36 @@ function resolveParametersForTurn(binding, messages) {
   return base;
 }
 
+function resolveBindingForTurn(binding, messages) {
+  var data;
+  try {
+    data = loadConfig();
+  } catch (e) {
+    return binding;
+  }
+  var fixHook = data && data.fixHook;
+  if (
+    fixHook &&
+    fixHook.enabled !== false &&
+    Array.isArray(fixHook.patterns) &&
+    fixHook.patterns.length > 0
+  ) {
+    if (matchesEffortWhen(messages, fixHook.patterns)) {
+      log(
+        "fixHook matched! Routing code-fix turn to autonomous Pi repair engine.",
+      );
+      return Object.assign({}, binding || {}, {
+        provider: fixHook.targetProvider || "pi",
+        modelId:
+          fixHook.targetModel ||
+          (binding && binding.modelId) ||
+          "gemini-3.7-flash-high",
+      });
+    }
+  }
+  return binding;
+}
+
 function dumpProto(stock) {
   var proto =
     stock && typeof stock === "object" ? Object.getPrototypeOf(stock) : null;
@@ -627,7 +657,12 @@ function hopFullStream(
         max_tokens:
           options2 && options2.maxTokens != null ? options2.maxTokens : 8192,
       };
-      hopSess.parameters = resolveParametersForTurn(binding, turn.messages);
+      var activeBinding = resolveBindingForTurn(binding, turn.messages);
+      if (activeBinding) {
+        hopSess.provider = activeBinding.provider;
+        hopSess.modelId = activeBinding.modelId;
+      }
+      hopSess.parameters = resolveParametersForTurn(activeBinding, turn.messages);
       var effLog = (hopSess.parameters || [])
         .map((p) => p.id + "=" + p.value)
         .join(" ");
@@ -936,5 +971,6 @@ module.exports = {
     toOpenAIMessages: toOpenAIMessages,
     parseHopToolCall: parseHopToolCall,
     resolveParametersForTurn: resolveParametersForTurn,
+    resolveBindingForTurn: resolveBindingForTurn,
   },
 };

@@ -318,6 +318,43 @@ assert.equal(
   stockSentinel,
   "empty config must degrade to native",
 );
+
+// 8. fixHook: surgical interception of bug-fix/PR repair turns ONLY.
+fs2.writeFileSync(
+  tmpB,
+  JSON.stringify({
+    agents: {
+      "*": {
+        modelId: "claude-3-7-sonnet",
+        provider: "custom",
+        hopBaseUrl: "http://127.0.0.1:9/v1",
+      },
+    },
+    fixHook: {
+      enabled: true,
+      targetProvider: "pi",
+      targetModel: "gemini-3.7-flash-high",
+      patterns: ["fix", "repair", "bug", "报错", "修复", "test failed"],
+    },
+  }),
+);
+var rtFix = rerequire(tmpB);
+var defaultChatBinding = { modelId: "claude-3-7-sonnet", provider: "custom" };
+
+// Normal chat does NOT trigger fixHook
+var chatTurn = rtFix._testHooks.resolveBindingForTurn(defaultChatBinding, [
+  { role: "user", content: "Explain how React reconciler works" },
+]);
+assert.equal(chatTurn.provider, "custom", "normal chat must stay on default provider");
+assert.equal(chatTurn.modelId, "claude-3-7-sonnet", "normal chat must stay on default model");
+
+// Bug repair message DOES trigger fixHook
+var fixTurn = rtFix._testHooks.resolveBindingForTurn(defaultChatBinding, [
+  { role: "user", content: "Please fix the failing test in auth.spec.ts: TypeError" },
+]);
+assert.equal(fixTurn.provider, "pi", "bug fix turn must be hooked to pi");
+assert.equal(fixTurn.modelId, "gemini-3.7-flash-high", "bug fix turn must route to pi target model");
+
 fs2.unlinkSync(tmpB);
 
 console.log("opengrok-runtime: ok");
